@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Registro de Gastos Personales</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Registro mensual de gastos personales</h1>
+      <p>Cargá tus gastos y guardalos automáticamente en Google Sheets.</p>
+
+      <form id="gasto-form" class="card">
+        <label>
+          Mes
+          <input type="month" name="mes" required />
+        </label>
+
+        <label>
+          Fecha del gasto
+          <input type="date" name="fecha" required />
+        </label>
+
+        <label>
+          Categoría
+          <select name="categoria" required>
+            <option value="">Seleccionar...</option>
+            <option>Alimentos</option>
+            <option>Transporte</option>
+            <option>Servicios</option>
+            <option>Vivienda</option>
+            <option>Salud</option>
+            <option>Entretenimiento</option>
+            <option>Otro</option>
+          </select>
+        </label>
+
+        <label>
+          Descripción
+          <input type="text" name="descripcion" placeholder="Ej: supermercado" required />
+        </label>
+
+        <label>
+          Monto
+          <input type="number" name="monto" min="0" step="0.01" required />
+        </label>
+
+        <label>
+          Método de pago
+          <select name="metodoPago" required>
+            <option value="">Seleccionar...</option>
+            <option>Efectivo</option>
+            <option>Débito</option>
+            <option>Crédito</option>
+            <option>Transferencia</option>
+            <option>Otro</option>
+          </select>
+        </label>
+
+        <button type="submit">Guardar gasto</button>
+      </form>
+
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
