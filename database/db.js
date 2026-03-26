@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
 
 const DB_DRIVER = String(process.env.DB_DRIVER || '').trim().toLowerCase();
 const IS_PROD = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
@@ -128,6 +127,7 @@ function createPostgresAdapter() {
 }
 
 function createSqliteAdapter() {
+  const sqlite3 = require('sqlite3').verbose();
   const DB_PATH = path.join(__dirname, '..', 'tareas.db');
   const db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) {
