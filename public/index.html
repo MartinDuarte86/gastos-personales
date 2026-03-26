@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Matriz de Eisenhower</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="appSidebar">
+      <section class="sidebar-section">
+        <h2>Vistas</h2>
+        <button id="toggleHistoryBtn" class="filter-btn" style="width: 100%; justify-content: flex-start;" type="button">Historial Completadas</button>
+      </section>
+      <section class="sidebar-section">
+        <h2>Buscador</h2>
+        <input id="searchInput" type="text" placeholder="Buscar tareas..." class="search-input" />
+      </section>
+      <section class="sidebar-section">
+        <h2>Filtros</h2>
+        <div class="filter-group">
+          <label class="filter-label">Categorías</label>
+          <div class="filter-list" id="filterList"></div>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Equipo (Asignado a)</label>
+          <div class="team-avatars" id="teamAvatars">
+            <!-- Avatares dinámicos -->
+          </div>
+          <form id="addTeamForm" class="add-inline-form">
+            <input type="text" id="newTeamMember" placeholder="Nuevo miembro..." required>
+            <button type="submit">+</button>
+          </form>
+        </div>
+      </section>
+      <section class="sidebar-section">
+        <h2>Backlog</h2>
+        <div class="backlog-list" id="backlogList"></div>
+      </section>
+      <section class="sidebar-section">
+        <h2>Gestión de Categorías</h2>
+        <div class="category-color-list" id="categoryColorList"></div>
+        <form id="addCategoryForm" class="add-inline-form" style="margin-top: 8px;">
+          <input type="text" id="newCategoryName" placeholder="Nueva..." required>
+          <input type="color" id="newCategoryColor" value="#ffeb3b">
+          <button type="submit">+</button>
+        </form>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="top-navbar">
+        <div class="view-switch">
+          <button id="matrixViewBtn" class="view-btn active" type="button">Tareas</button>
+          <button id="calendarViewBtn" class="view-btn" type="button">Calendario</button>
+          <button id="presupuestoViewBtn" class="view-btn" type="button">Movimientos</button>
+        <button id="invViewBtn" class="view-btn" type="button">Inversiones</button>
+          <button id="darkModeBtn" class="view-btn toggle-dark" type="button" aria-label="Modo Oscuro" data-app-icon="darkModeMoon"></button>
+        </div>
+        <button id="logoutBtn" class="view-btn logout-btn" type="button" hidden style="border: 1px solid var(--line);">Cerrar Sesión</button>
+      </header>
+
+      <section id="authPanel" class="auth-panel" hidden>
+        <div class="auth-card">
+          <h1 id="authTitle">Iniciar Sesión</h1>
+          <form id="authForm" class="auth-form">
+            <input id="authUsername" type="text" placeholder="Usuario" required />
+            <input id="authPassword" type="password" placeholder="Contraseña" required />
+            <p id="authError" class="auth-error"></p>
+            <button id="authSubmitBtn" type="submit">Ingresar</button>
+          </form>
+          <button id="authToggleModeBtn" class="auth-toggle-btn">No tengo cuenta (Registrarme)</button>
+        </div>
+      </section>
+
+      <button id="fabAddBtn" class="fab" aria-label="Agregar Tarea">+</button>
+
+      <dialog id="taskModal" class="modal">
+        <form class="task-form" id="taskForm" method="dialog">
+          <h1>Tarea</h1>
+          <input id="title" type="text" placeholder="Titulo" required />
+          <select id="assigned" class="filter-select">
+            <option value="">Sin asignar</option>
+          </select>
+          <input id="fecha" type="datetime-local" />
+          <textarea id="description" placeholder="Descripcion"></textarea>
+          <div class="category-config" style="grid-template-columns: 1fr;">
+            <input id="category" list="categorySuggestions" type="text" placeholder="Categoria (ej: MyAnanda, LAN, Personal)" />
+            <select id="formQuadrant" class="filter-select" style="margin-top: 8px;">
+              <option value="backlog">Backlog (Inbox)</option>
+              <option value="en_progreso">En progreso</option>
+              <option value="hacer">Hacer</option>
+              <option value="decidir">Decidir</option>
+              <option value="delegar">Delegar</option>
+              <option value="eliminar">Eliminar</option>
+            </select>
+          </div>
+          <datalist id="categorySuggestions"></datalist>
+          <div class="form-actions">
+            <button type="submit" id="submitTaskBtn">Guardar tarea</button>
+            <button id="cancelEditBtn" class="cancel-btn" type="button">Cancelar</button>
+          </div>
+        </form>
+      </dialog>
+
+      <section class="matrix view-panel" id="matrixPanel">
+        <div class="in-progress-zone" id="inProgressZone" data-quadrant="en_progreso">
+          <h3>En progreso</h3>
+          <p class="drop-hint">Arrastra aqui las tareas que estas trabajando</p>
+        </div>
+        <div class="matrix-grid">
+          <div class="quadrant" data-quadrant="hacer">
+            <h3>Hacer</h3>
+          </div>
+          <div class="quadrant" data-quadrant="decidir">
+            <h3>Decidir</h3>
+          </div>
+          <div class="quadrant" data-quadrant="delegar">
+            <h3>Delegar</h3>
+          </div>
+          <div class="quadrant" data-quadrant="eliminar">
+            <h3>Eliminar</h3>
+          </div>
+        </div>
+      </section>
+
+      <section class="calendar view-panel" id="calendarPanel" hidden>
+        <div class="calendar-header">
+          <h3 class="calendar-title" id="calendarTitle">Calendario</h3>
+          <div class="calendar-nav">
+            <button id="calendarPrevBtn" class="calendar-nav-btn" type="button" aria-label="Mes anterior">&lt;</button>
+            <button id="calendarTodayBtn" class="calendar-nav-btn" type="button" aria-label="Mes actual">Hoy</button>
+            <button id="calendarNextBtn" class="calendar-nav-btn" type="button" aria-label="Mes siguiente">&gt;</button>
+          </div>
+        </div>
+        <div class="calendar-weekdays" id="calendarWeekdays"></div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+      </section>
+
+      <section class="history view-panel" id="historyPanel" hidden>
+        <div class="history-header">
+          <h3 class="history-title">Historial de Completadas</h3>
+          <input type="month" id="historyMonthFilter" class="filter-select" style="width: auto;">
+        </div>
+        <div class="history-list" id="historyList"></div>
+      </section>
+
+      <!-- Panel Presupuesto -->
+      <section class="view-panel" id="presupuestoPanel" hidden>
+        <div id="budget-global-summary"></div>
+        <div id="budget-cuentas-list" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem;"></div>
+      </section>
+
+      <section class="inversiones view-panel" id="inversionesPanel" hidden>
+        <div class="inversiones-header">
+          <h3 class="inversiones-title">Mis Inversiones</h3>
+          <div class="currency-toggle">
+            <span class="currency-label">ARS</span>
+            <label class="switch">
+              <input type="checkbox" id="currencyToggleBtn">
+              <span class="slider round"></span>
+            </label>
+            <span class="currency-label">USD (MEP: $<span id="mepValueLabel">0.00</span>)</span>
+          </div>
+        </div>
+
+        <!-- Liquidez de Inversión -->
+        <div class="inv-liquidez-box" id="invLiquidezBox" style="background: var(--bg-card); padding: 1rem; border-radius: 8px; border-left: 4px solid #22c55e; margin-bottom: 1rem; display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap;">
+          <div>
+            <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);"><span data-app-icon="droplet"></span> LIQUIDEZ DISPONIBLE PARA INVERTIR</h4>
+            <p id="invLiquidezNeta" style="margin:0; font-size: 1.5rem; font-weight: bold; color: #22c55e;">$0.00</p>
+          </div>
+          <div style="font-size: 0.8rem; color: var(--text-200); flex: 1;">
+            <span>Bruta: <strong id="invLiquidezBruta">$0.00</strong></span> &nbsp;—&nbsp;
+            <span>Usado en activos: <strong id="invLiquidezDescuentos">$0.00</strong></span>
+          </div>
+        </div>
+
+        <h4 style="margin-bottom: 0.5rem; color: var(--text-200);">Totales Globales (Auditoría Patrimonial)</h4>
+        <div class="inv-summary-boxes" style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+          <div class="inv-box" style="flex: 1; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
+            <h4 style="margin:0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-200);">Invertido Histórico Total</h4>
+            <p id="invTotalInvertido" style="margin:0; font-size: 1.5rem; font-weight: bold;">$0.00</p>
+          </div>
+          <div class="inv-box" style="flex: 1; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
+            <h4 style="margin:0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-200);">Revalorizado Actual Total</h4>
+            <p id="invTotalRevalorizado" style="margin:0; font-size: 1.5rem; font-weight: bold;">$0.00</p>
+          </div>
+          <div class="inv-box" style="flex: 1; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
+            <h4 style="margin:0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-200);">PNL Global</h4>
+            <p id="invTotalPnl" style="margin:0; font-size: 1.5rem; font-weight: bold;" class="pnl-neutral">$0.00 (0.00%)</p>
+          </div>
+        </div>
+
+        <div class="inv-tabs" style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+          <button class="inv-tab-btn filter-btn active" data-target="invPositionsTab" type="button">Posiciones</button>
+          <button class="inv-tab-btn filter-btn" data-target="invCargaTab" type="button">Cargar Operación</button>
+          <button class="inv-tab-btn filter-btn" data-target="invGraficosTab" type="button">Gráficos</button>
+        </div>
+
+        <div id="invPositionsTab" class="inv-tab-content">
+          <div class="filter-list" id="invFiltersList" style="margin-bottom: 1rem;">
+            <!-- Chips de sectores -->
+          </div>
+          <div id="invSectorStats" class="inv-summary-boxes" style="display: none; gap: 1rem; margin-bottom: 1rem; background: var(--bg-body); padding: 1rem; border-left: 4px solid var(--primary-color);">
+            <div style="flex: 1;">
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Invertido Sector</h4>
+              <p id="sectorInvertido" style="margin:0; font-size: 1.2rem; font-weight: 600;">$0.00</p>
+            </div>
+            <div style="flex: 1;">
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Valorizado Sector</h4>
+              <p id="sectorValorizado" style="margin:0; font-size: 1.2rem; font-weight: 600;">$0.00</p>
+            </div>
+            <div style="flex: 1;">
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Retorno Sector</h4>
+              <p id="sectorPnl" style="margin:0; font-size: 1.2rem; font-weight: 600;" class="pnl-neutral">$0.00 (0.00%)</p>
+            </div>
+          </div>
+          <div class="inv-list" id="invList" style="display: grid; gap: 1rem;"></div>
+        </div>
+
+        <div id="invCargaTab" class="inv-tab-content" hidden>
+          <form id="invTransaccionForm" class="expense-form">
+            <h4 style="margin-bottom: 1rem;">Registrar Transacción (Ingreso/Egreso)</h4>
+            <div class="expense-inputs">
+              <select id="invTxActivo" required class="filter-select">
+                <option value="">Seleccione Activo...</option>
+              </select>
+              <select id="invTxTipo" required class="filter-select">
+                <option value="INGRESO">Ingreso (Compra/Depósito)</option>
+                <option value="EGRESO">Egreso (Venta/Retiro)</option>
+              </select>
+              <input type="number" id="invTxCantidad" step="0.000001" placeholder="Cantidad" required />
+              <input type="number" id="invTxPrecio" step="0.01" placeholder="Precio Operación Unitaro" required />
+              <select id="invTxMoneda" required class="filter-select">
+                <option value="ARS">Operado en ARS</option>
+                <option value="USD">Operado en USD</option>
+              </select>
+              <input type="date" id="invTxFecha" required />
+              <input type="number" id="invTxTna" step="0.01" placeholder="TNA (%) (Obligatorio para Plazo Fijo/Caución)" hidden />
+              <label style="display:flex; flex-direction:column; gap:4px; font-size:0.9rem;">
+                ¿Restar de Liquidez de Inversión?
+                <select id="invTxRestaLiquidez" class="filter-select">
+                  <option value="no">No (el dinero proviene de otro origen)</option>
+                  <option value="si">Sí (descontar de mi liquidez acumulada)</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-actions" style="margin-top: 1rem;">
+              <button type="submit">Guardar Transacción</button>
+              <button type="button" class="cancel-btn" id="invNewActivoBtn">Crear Nuevo Activo</button>
+            </div>
+          </form>
+
+          <form id="invActivoForm" class="expense-form" hidden style="margin-top: 1.5rem; border-top: 1px dashed var(--border-color); padding-top: 1.5rem;">
+            <h4 style="margin-bottom: 1rem;">Crear Nuevo Activo</h4>
+            <div class="expense-inputs">
+              <input type="text" id="invActTicker" placeholder="Ticker (Ej: AAPL)" required />
+              <input type="text" id="invActNombre" placeholder="Nombre completo" />
+              <input type="text" id="invActSector" placeholder="Sector (Escriba nuevo o existente)" required list="invSectorSuggestions" />
+              <datalist id="invSectorSuggestions"></datalist>
+              <select id="invActClase" required class="filter-select">
+                <option value="Acción">Acción</option>
+                <option value="Bono">Bono</option>
+                <option value="Cripto">Cripto</option>
+                <option value="CEDEAR">CEDEAR</option>
+                <option value="Plazo Fijo">Plazo Fijo</option>
+                <option value="Caución">Caución</option>
+              </select>
+              <select id="invActProvider" class="filter-select">
+                <option value="manual">Actualización Manual</option>
+                <option value="yahoo">Yahoo Finance Automático</option>
+              </select>
+              <input type="text" id="invActProviderId" placeholder="Tick para Yahoo (Ej: AAPL.BA)" />
+            </div>
+            <div class="form-actions" style="margin-top: 1rem;">
+              <button type="submit">Guardar Activo</button>
+              <button type="button" class="cancel-btn" id="invCancelActivoBtn">Cancelar</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="invGraficosTab" class="inv-tab-content" hidden>
+          <div class="inv-charts-layout" style="display: flex; gap: 2rem; flex-wrap: wrap;">
+            <div class="inv-chart-container" style="flex: 1; min-width: 300px; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
+              <h4 style="text-align:center; margin-bottom:1rem;">Distribución por Sector</h4>
+              <canvas id="invSectorChart"></canvas>
+            </div>
+            <div class="inv-chart-container" style="flex: 1; min-width: 300px; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
+              <h4 style="text-align:center; margin-bottom:1rem;">Distribución por Activo</h4>
+              <canvas id="invActivoChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Modal de Libro Mayor -->
+      <dialog id="invLedgerModal" class="modal" style="max-width: 800px; width: 90%;">
+        <div class="modal-content" style="padding: 1.5rem;">
+          <h2 id="ledgerTitle" style="margin-bottom: 1rem;">Libro Mayor de Operaciones</h2>
+          <div style="max-height: 400px; overflow-y: auto; margin-bottom: 1rem; border: 1px solid var(--border-color); border-radius: 8px;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+              <thead style="background: var(--bg-hover); position: sticky; top: 0;">
+                <tr>
+                  <th style="padding: 0.75rem; border-bottom: 1px solid var(--border-color);">Fecha</th>
+                  <th style="padding: 0.75rem; border-bottom: 1px solid var(--border-color);">Tipo</th>
+                  <th style="padding: 0.75rem; border-bottom: 1px solid var(--border-color);">Cantidad</th>
+                  <th style="padding: 0.75rem; border-bottom: 1px solid var(--border-color);">Precio Unit.</th>
+                  <th style="padding: 0.75rem; border-bottom: 1px solid var(--border-color);">Total Op.</th>
+                </tr>
+              </thead>
+              <tbody id="ledgerTableBody">
+                <!-- Transactions via JS -->
+              </tbody>
+            </table>
+          </div>
+          <div style="display: flex; gap: 1rem; background: var(--bg-hover); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+            <div style="flex: 1;">
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Tenencia Total</h4>
+              <p id="ledgerTotalQty" style="margin:0; font-size: 1.2rem; font-weight: bold;">0.0000</p>
+            </div>
+            <div style="flex: 1;">
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Invertido Histórico</h4>
+              <p id="ledgerTotalInv" style="margin:0; font-size: 1.2rem; font-weight: bold;">$0.00</p>
+            </div>
+            <div style="flex: 1;">
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Valuación Actual</h4>
+              <p id="ledgerTotalVal" style="margin:0; font-size: 1.2rem; font-weight: bold;">$0.00</p>
+            </div>
+          </div>
+          <div class="form-actions" style="justify-content: flex-end;">
+            <button type="button" class="cancel-btn" id="closeLedgerBtn">Cerrar</button>
+          </div>
+        </div>
+      </dialog>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="js/ui/IconRegistry.js" defer></script>
+  <script src="js/components/GlobalSummaryHeader.js" defer></script>
+  <script src="js/components/SectorDetailView.js" defer></script>
+  <script src="js/components/LedgerModal.js" defer></script>
+  <script src="js/components/BudgetDashboard.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

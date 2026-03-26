@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique @db.VarChar(80)
+  passwordHash String   @map("password_hash")
+  salt         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tasks       Task[]
+  expenses    Expense[]
+  teamMembers TeamMember[]
+  cuentas     Cuenta[]
+
+  @@map("users")
+}
+
+model Task {
+  id                 Int      @id @default(autoincrement())
+  title              String
+  description        String?
+  quadrant           String
+  assigned           String?
+  category           String?
+  fecha              String?
+  completed          Int      @default(0)
+  position           Int      @default(0)
+  inProgressSeconds  Int      @default(0) @map("in_progress_seconds")
+  inProgressStartedAt String? @map("in_progress_started_at")
+  everInProgress     Int      @default(0) @map("ever_in_progress")
+  userId             Int?     @map("user_id")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("tasks")
+}
+
+model Expense {
+  id          Int      @id @default(autoincrement())
+  user        String
+  userId      Int?     @map("user_id")
+  description String
+  amount      Float
+  category    String?
+  date        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  owner User? @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("expenses")
+}
+
+model TeamMember {
+  id     Int    @id @default(autoincrement())
+  name   String
+  userId Int    @map("user_id")
+
+  owner User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([name, userId])
+  @@map("team_members")
+}
+
+model InvSector {
+  idSector Int     @id @default(autoincrement()) @map("id_sector")
+  nombre   String  @unique
+  userId   Int?    @map("user_id")
+  activos  InvActivo[]
+
+  @@map("inv_sectores")
+}
+
+model InvActivo {
+  idActivo          Int              @id @default(autoincrement()) @map("id_activo")
+  ticker            String           @unique
+  nombre            String?
+  idSector          Int?             @map("id_sector")
+  clase             String?
+  apiProvider       String?          @default("manual") @map("api_provider")
+  apiId             String?          @map("api_id")
+  precioMercado     Float?           @default(0) @map("precio_mercado")
+  fechaUltimoPrecio DateTime?        @map("fecha_ultimo_precio")
+  userId            Int?             @map("user_id")
+  sector            InvSector?       @relation(fields: [idSector], references: [idSector], onDelete: NoAction, onUpdate: NoAction)
+  transacciones     InvTransaccion[]
+
+  @@map("inv_activos")
+}
+
+model InvTransaccion {
+  idTransaccion  Int       @id @default(autoincrement()) @map("id_transaccion")
+  fechaOperacion DateTime? @default(now()) @map("fecha_operacion") @db.Date
+  idActivo       Int       @map("id_activo")
+  tipoMovimiento String    @map("tipo_movimiento")
+  cantidad       Float
+  precioOperacion Float    @map("precio_operacion")
+  moneda         String
+  restaLiquidez  Int       @default(0) @map("resta_liquidez")
+  tna            Float?
+  userId         Int?      @map("user_id")
+
+  activo InvActivo @relation(fields: [idActivo], references: [idActivo], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("inv_transacciones")
+}
+
+model InvConfig {
+  clave String @id
+  valor Float?
+
+  @@map("inv_config")
+}
+
+model Cuenta {
+  id                   String   @id
+  userId               Int      @map("user_id")
+  nombre               String
+  presupuestoMensualBase Float  @default(0) @map("presupuesto_mensual_base")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  owner           User             @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  categorias      Categoria[]
+  gastos          Gasto[]
+  presupuestos    PresupuestoMensual[]
+  cuentaUsuarios  CuentaUsuario[]
+
+  @@map("cuentas")
+}
+
+model CuentaUsuario {
+  cuentaId String @map("cuenta_id")
+  userId   Int    @map("user_id")
+
+  cuenta Cuenta @relation(fields: [cuentaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([cuentaId, userId])
+  @@map("cuenta_usuarios")
+}
+
+model Categoria {
+  id                  String   @id
+  cuentaId            String   @map("cuenta_id")
+  nombre              String
+  colorHex            String?  @default("#6C757D") @map("color_hex")
+  porcentajeAsignacion Float   @default(0) @map("porcentaje_asignacion")
+  tipo                String   @default("EGRESO")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  cuenta Cuenta  @relation(fields: [cuentaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  gastos Gasto[]
+
+  @@map("categorias")
+}
+
+model Gasto {
+  id           String   @id
+  categoriaId  String   @map("categoria_id")
+  cuentaId     String   @map("cuenta_id")
+  descripcion  String?
+  monto        Float
+  fecha        String
+  metodoPago   String?  @default("Efectivo") @map("metodo_pago")
+  esRecurrente Int      @default(0) @map("es_recurrente")
+  cuotaActual  Int      @default(1) @map("cuota_actual")
+  totalCuotas  Int      @default(1) @map("total_cuotas")
+  proyeccionId String?  @map("proyeccion_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  categoria Categoria @relation(fields: [categoriaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  cuenta    Cuenta    @relation(fields: [cuentaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([cuentaId, fecha], map: "idx_gastos_cuenta_fecha")
+  @@index([proyeccionId], map: "idx_gastos_proyeccion")
+  @@map("gastos")
+}
+
+model PresupuestoMensual {
+  id         String   @id
+  cuentaId   String   @map("cuenta_id")
+  mes        Int
+  anio       Int
+  montoTotal Float    @default(0) @map("monto_total")
+  estado     String?  @default("manual")
+  notaOrigen String?  @map("nota_origen")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  cuenta Cuenta @relation(fields: [cuentaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([cuentaId, mes, anio])
+  @@map("presupuestos_mensuales")
+}

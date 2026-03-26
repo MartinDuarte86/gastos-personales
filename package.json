@@ -1,0 +1,25 @@
+{
+  "name": "eisenhower-matrix",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio",
+    "db:neon:bootstrap": "psql \"$env:DATABASE_URL\" -f database/postgres/001_bootstrap.sql",
+    "db:neon:check": "node scripts/check-neon-connection.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.7.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.13.1",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "prisma": "^6.7.0"
+  }
+}

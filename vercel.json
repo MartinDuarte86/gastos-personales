@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 10
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/internal/refresh-prices",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
