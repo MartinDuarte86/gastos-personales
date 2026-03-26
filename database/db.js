@@ -2,8 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 
-const DB_DRIVER = (process.env.DB_DRIVER || '').trim().toLowerCase();
-const IS_PROD = process.env.NODE_ENV === 'production';
+const DB_DRIVER = String(process.env.DB_DRIVER || '').trim().toLowerCase();
+const IS_PROD = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
 
 function normalizeDriver() {
   if (DB_DRIVER === 'postgres' || DB_DRIVER === 'postgresql') return 'postgres';
@@ -32,7 +32,7 @@ function inferLastId(row = {}) {
 
 function createPostgresAdapter() {
   const { Pool } = require('pg');
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = String(process.env.DATABASE_URL || '').trim();
   if (!databaseUrl) {
     throw new Error('DATABASE_URL is required for postgres driver');
   }

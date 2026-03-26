@@ -16,10 +16,11 @@ const { initDb } = require('./database/db');
 
 const app = express();
 const PORT = process.env.PORT || 3010;
-const JWT_SECRET = process.env.JWT_SECRET;
-const IS_PROD = process.env.NODE_ENV === 'production';
+const NODE_ENV = String(process.env.NODE_ENV || '').trim().toLowerCase();
+const JWT_SECRET = String(process.env.JWT_SECRET || '').trim();
+const IS_PROD = NODE_ENV === 'production';
 const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-const CRON_SECRET = process.env.CRON_SECRET || '';
+const CRON_SECRET = String(process.env.CRON_SECRET || '').trim();
 const IS_ENTRYPOINT = require.main === module;
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
