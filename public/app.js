@@ -16,9 +16,10 @@ const state = {
       token: null,
       username: null,
       tasks: [],
-      team: [],
+      teams: [],
       filterCategories: [],
       filterAssignee: 'Todos',
+      selectedSidebarTeamId: '',
       searchQuery: '',
       editingTaskId: null,
       categoryColors: {},
@@ -56,7 +57,9 @@ const state = {
     const IN_PROGRESS = 'en_progreso';
     const titleInput = document.getElementById('title');
     const descriptionInput = document.getElementById('description');
+    const teamIdInput = document.getElementById('teamId');
     const assignedInput = document.getElementById('assigned');
+    const sidebarTeamSelector = document.getElementById('sidebarTeamSelector');
     const fechaInput = document.getElementById('fecha');
     const categoryInput = document.getElementById('category');
     const categoryColorInput = document.getElementById('categoryColor');
@@ -136,11 +139,11 @@ const state = {
       }
     }
 
-    async function loadTeam() {
+    async function loadTeams() {
       try {
-        state.team = await api('/api/team');
+        state.teams = await api('/api/teams');
       } catch (e) {
-        state.team = [];
+        state.teams = [];
       }
       renderTeamAvatars();
     }
@@ -281,53 +284,136 @@ const state = {
       });
     }
 
+    function getTeamById(teamId) {
+      if (!teamId) return null;
+      return state.teams.find((team) => String(team.id) === String(teamId)) || null;
+    }
+
+    function getMembersForTeam(teamId) {
+      const team = getTeamById(teamId);
+      return team?.members || [];
+    }
+
+    function getVisibleMembers() {
+      if (state.selectedSidebarTeamId) {
+        return getMembersForTeam(state.selectedSidebarTeamId);
+      }
+      const seen = new Set();
+      return state.teams.flatMap((team) =>
+        (team.members || [])
+          .map((m) => ({ ...m, team_id: team.id }))
+          .filter((m) => {
+            const key = String(m.user_id);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+      );
+    }
+
+    function getTaskAssigneeName(task) {
+      return (task.assigned_username || task.assigned || '').trim();
+    }
+
+    function syncTaskAssigneeOptions(selectedUserId = '') {
+      if (!assignedInput) return;
+      const members = teamIdInput?.value ? getMembersForTeam(teamIdInput.value) : [];
+      assignedInput.innerHTML = '<option value="">Sin asignar</option>';
+      members.forEach((member) => {
+        const opt = document.createElement('option');
+        opt.value = String(member.user_id);
+        opt.textContent = member.username;
+        assignedInput.appendChild(opt);
+      });
+      if (selectedUserId && members.some((member) => String(member.user_id) === String(selectedUserId))) {
+        assignedInput.value = String(selectedUserId);
+      } else {
+        assignedInput.value = '';
+      }
+    }
+
     function renderTeamAvatars() {
       const teamAvatars = document.getElementById('teamAvatars');
-      const assignedSelect = document.getElementById('assigned');
-      if (teamAvatars) {
-        teamAvatars.innerHTML = '';
-        const allAvatar = document.createElement('div');
-        allAvatar.className = 'avatar' + (state.filterAssignee === 'Todos' ? ' active' : '');
-        allAvatar.textContent = 'All';
-        allAvatar.title = 'Mostrar Todos';
-        allAvatar.onclick = () => { state.filterAssignee = 'Todos'; renderTeamAvatars(); renderBoard(); renderCalendar(); renderHistory(); };
-        teamAvatars.appendChild(allAvatar);
-
-        state.team.forEach(member => {
-          const initials = member.name.substring(0, 2).toUpperCase();
-          const avatar = document.createElement('div');
-          avatar.className = 'avatar' + (state.filterAssignee === member.name ? ' active' : '');
-          avatar.textContent = initials;
-          avatar.title = member.name;
-          avatar.onclick = () => { 
-            state.filterAssignee = (state.filterAssignee === member.name) ? 'Todos' : member.name;
-            renderTeamAvatars(); renderBoard(); renderCalendar(); renderHistory();
-          };
-          avatar.addEventListener('contextmenu', async (e) => {
-            e.preventDefault();
-            if (confirm(`¿Eliminar a ${member.name} del equipo?`)) {
-              try {
-                await api(`/api/team/${member.id}`, { method: 'DELETE' });
-                if (state.filterAssignee === member.name) state.filterAssignee = 'Todos';
-                await loadTeam();
-              } catch (err) {
-                console.error('[deleteTeamMember]', err);
-                showToast(err.message || 'No se pudo eliminar el miembro', true);
-              }
-            }
-          });
-          teamAvatars.appendChild(avatar);
-        });
+      if (state.selectedSidebarTeamId && !state.teams.some((team) => String(team.id) === String(state.selectedSidebarTeamId))) {
+        state.selectedSidebarTeamId = '';
       }
-      if (assignedSelect) {
-        assignedSelect.innerHTML = '<option value="">Sin asignar</option>';
-        state.team.forEach(member => {
+      if (sidebarTeamSelector) {
+        sidebarTeamSelector.innerHTML = '<option value="">Todos los equipos</option>';
+        state.teams.forEach((team) => {
           const opt = document.createElement('option');
-          opt.value = member.name;
-          opt.textContent = member.name;
-          assignedSelect.appendChild(opt);
+          opt.value = String(team.id);
+          opt.textContent = team.name;
+          sidebarTeamSelector.appendChild(opt);
         });
+        sidebarTeamSelector.value = state.selectedSidebarTeamId ? String(state.selectedSidebarTeamId) : '';
       }
+
+      if (teamIdInput) {
+        const selectedTeamValue = teamIdInput.value;
+        teamIdInput.innerHTML = '<option value="">Sin equipo</option>';
+        state.teams.forEach((team) => {
+          const opt = document.createElement('option');
+          opt.value = String(team.id);
+          opt.textContent = team.name;
+          teamIdInput.appendChild(opt);
+        });
+        if (selectedTeamValue && state.teams.some((team) => String(team.id) === String(selectedTeamValue))) {
+          teamIdInput.value = String(selectedTeamValue);
+        } else {
+          teamIdInput.value = '';
+        }
+      }
+
+      if (!teamAvatars) return;
+      teamAvatars.innerHTML = '';
+      const allAvatar = document.createElement('div');
+      allAvatar.className = 'avatar' + (state.filterAssignee === 'Todos' ? ' active' : '');
+      allAvatar.textContent = 'All';
+      allAvatar.title = 'Mostrar todos';
+      allAvatar.onclick = () => {
+        state.filterAssignee = 'Todos';
+        renderTeamAvatars();
+        renderBoard();
+        renderCalendar();
+        renderHistory();
+      };
+      teamAvatars.appendChild(allAvatar);
+
+      getVisibleMembers().forEach((member) => {
+        const initials = member.username.substring(0, 2).toUpperCase();
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar' + (state.filterAssignee === member.username ? ' active' : '');
+        avatar.textContent = initials;
+        avatar.title = member.username;
+        avatar.onclick = () => {
+          state.filterAssignee = state.filterAssignee === member.username ? 'Todos' : member.username;
+          renderTeamAvatars();
+          renderBoard();
+          renderCalendar();
+          renderHistory();
+        };
+        avatar.addEventListener('contextmenu', async (e) => {
+          e.preventDefault();
+          const teamId = member.team_id || state.selectedSidebarTeamId;
+          if (!teamId) {
+            showToast('Selecciona un equipo para eliminar miembros', true);
+            return;
+          }
+          if (confirm(`¿Eliminar a ${member.username} del equipo?`)) {
+            try {
+              await api(`/api/teams/${teamId}/members/${member.user_id}`, { method: 'DELETE' });
+              if (state.filterAssignee === member.username) state.filterAssignee = 'Todos';
+              await loadTeams();
+            } catch (err) {
+              console.error('[deleteTeamMember]', err);
+              showToast(err.message || 'No se pudo eliminar el miembro', true);
+            }
+          }
+        });
+        teamAvatars.appendChild(avatar);
+      });
+
+      syncTaskAssigneeOptions(assignedInput?.value || '');
     }
 
     function renderCategorySuggestions() {
@@ -424,7 +510,7 @@ const state = {
         filtered = filtered.filter((task) => state.filterCategories.includes((task.category || '').trim()));
       }
       if (state.filterAssignee !== 'Todos') {
-        filtered = filtered.filter((task) => (task.assigned || '').trim() === state.filterAssignee);
+        filtered = filtered.filter((task) => getTaskAssigneeName(task) === state.filterAssignee);
       }
       return filtered;
     }
@@ -552,7 +638,8 @@ const state = {
           state.editingTaskId = task.id;
           titleInput.value = task.title || '';
           descriptionInput.value = task.description || '';
-          assignedInput.value = task.assigned || '';
+          teamIdInput.value = task.team_id ? String(task.team_id) : '';
+          syncTaskAssigneeOptions(task.assigned_user_id ? String(task.assigned_user_id) : '');
           fechaInput.value = normalizeFechaInput(task.fecha);
           categoryInput.value = task.category || '';
           categoryColorInput.value = getCategoryHex(task.category || '');
@@ -609,6 +696,8 @@ const state = {
     function resetEditMode() {
       state.editingTaskId = null;
       taskForm.reset();
+      if (teamIdInput) teamIdInput.value = '';
+      syncTaskAssigneeOptions('');
       fechaInput.value = '';
       if (categoryColorInput) categoryColorInput.value = '#fff28b';
       if (document.getElementById('formQuadrant')) document.getElementById('formQuadrant').disabled = false;
@@ -625,7 +714,8 @@ const state = {
 
       const title = task.title || '(Sin titulo)';
       const category = (task.category || 'Sin categoria').trim() || 'Sin categoria';
-      const assigned = (task.assigned || 'Sin asignar').trim() || 'Sin asignar';
+      const assigned = getTaskAssigneeName(task) || 'Sin asignar';
+      const teamName = (task.team_name || '').trim() || 'Sin equipo';
       const fecha = formatFecha(task.fecha);
       const trackedSeconds = getTaskInProgressSeconds(task);
       const hadInProgress = Number(task.ever_in_progress || 0) === 1 || trackedSeconds > 0 || Boolean(task.in_progress_started_at);
@@ -648,7 +738,7 @@ const state = {
           </div>
         </div>
         <div class="task-meta">
-          <p style="margin:0;">Categoria: ${escapeHtml(category)} | Asignado: ${escapeHtml(assigned)} | Fecha: ${escapeHtml(fecha)}${escapeHtml(inProgressLabel)}</p>
+          <p style="margin:0;">Categoria: ${escapeHtml(category)} | Equipo: ${escapeHtml(teamName)} | Asignado: ${escapeHtml(assigned)} | Fecha: ${escapeHtml(fecha)}${escapeHtml(inProgressLabel)}</p>
         </div>
       `;
 
@@ -681,7 +771,8 @@ const state = {
         state.editingTaskId = task.id;
         titleInput.value = task.title || '';
         descriptionInput.value = task.description || '';
-        assignedInput.value = task.assigned || '';
+        teamIdInput.value = task.team_id ? String(task.team_id) : '';
+        syncTaskAssigneeOptions(task.assigned_user_id ? String(task.assigned_user_id) : '');
         fechaInput.value = normalizeFechaInput(task.fecha);
         categoryInput.value = task.category || '';
         if (categoryColorInput) categoryColorInput.value = getCategoryHex(task.category || '');
@@ -860,7 +951,10 @@ const state = {
 
       const title = titleInput.value.trim();
       const description = descriptionInput.value.trim();
-      const assigned = assignedInput.value.trim();
+      const teamId = teamIdInput?.value ? Number(teamIdInput.value) : null;
+      const assignedUserId = assignedInput?.value ? Number(assignedInput.value) : null;
+      const assignedMember = teamId ? getMembersForTeam(teamId).find((member) => Number(member.user_id) === Number(assignedUserId)) : null;
+      const assigned = assignedMember?.username || '';
       const fecha = normalizeFechaInput(fechaInput.value);
       const category = categoryInput.value.trim();
 
@@ -881,7 +975,15 @@ const state = {
             await api(`/api/tasks/${state.editingTaskId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title, description, assigned, fecha, category })
+              body: JSON.stringify({
+                title,
+                description,
+                assigned,
+                fecha,
+                category,
+                team_id: teamId,
+                assigned_user_id: assignedUserId
+              })
             });
           } catch (_patchError) {
             // Fallback para servidores sin soporte PATCH: recrea y elimina original.
@@ -895,6 +997,8 @@ const state = {
                 assigned,
                 fecha,
                 category,
+                team_id: teamId,
+                assigned_user_id: assignedUserId,
                 quadrant: editingTask.quadrant || BACKLOG
               })
             });
@@ -904,7 +1008,16 @@ const state = {
           await api('/api/tasks', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, description, quadrant: targetQuadrant, assigned, fecha, category })
+            body: JSON.stringify({
+              title,
+              description,
+              quadrant: targetQuadrant,
+              assigned,
+              fecha,
+              category,
+              team_id: teamId,
+              assigned_user_id: assignedUserId
+            })
           });
         }
 
@@ -972,6 +1085,7 @@ const state = {
           state.username = res.username;
           authForm.reset();
           setView('matrix');
+          await loadTeams();
           await loadTasks();
         } catch (err) {
           authError.textContent = err.message;
@@ -1024,19 +1138,62 @@ const state = {
     if (historyMonthFilter) {
       historyMonthFilter.addEventListener('change', renderHistory);
     }
-    
+
+    if (sidebarTeamSelector) {
+      sidebarTeamSelector.addEventListener('change', (e) => {
+        state.selectedSidebarTeamId = e.target.value || '';
+        state.filterAssignee = 'Todos';
+        renderTeamAvatars();
+        renderBoard();
+        renderCalendar();
+        renderHistory();
+      });
+    }
+
+    if (teamIdInput) {
+      teamIdInput.addEventListener('change', () => {
+        syncTaskAssigneeOptions('');
+      });
+    }
+
     const addTeamForm = document.getElementById('addTeamForm');
     if (addTeamForm) {
       addTeamForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const input = document.getElementById('newTeamMember');
-        const name = input.value.trim();
-        if(!name) return;
+        const input = document.getElementById('newTeamName');
+        const name = input?.value.trim();
+        if (!name) return;
         try {
-          await api('/api/team', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+          await api('/api/teams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
           input.value = '';
-          await loadTeam();
-        } catch(err) { showToast(err.message, true); }
+          await loadTeams();
+        } catch (err) { showToast(err.message, true); }
+      });
+    }
+
+    const addTeamMemberForm = document.getElementById('addTeamMemberForm');
+    if (addTeamMemberForm) {
+      addTeamMemberForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const usernameInput = document.getElementById('newTeamMemberUsername');
+        const username = usernameInput?.value.trim();
+        const selectedTeamId = state.selectedSidebarTeamId || '';
+        if (!selectedTeamId) {
+          showToast('Selecciona un equipo para agregar miembros', true);
+          return;
+        }
+        if (!username) return;
+        try {
+          await api(`/api/teams/${selectedTeamId}/members`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username })
+          });
+          usernameInput.value = '';
+          await loadTeams();
+        } catch (err) {
+          showToast(err.message, true);
+        }
       });
     }
     
@@ -1273,7 +1430,7 @@ const state = {
           const clase = opt?.dataset?.clase || '';
           const tnaInput = document.getElementById('invTxTna');
           if (tnaInput) {
-            if (clase === 'Plazo Fijo' || clase === 'Caución') {
+            if (clase === 'Plazo Fijo' || clase === 'Caución' || clase === 'CauciÃ³n') {
               tnaInput.hidden = false;
               tnaInput.required = true;
             } else {
@@ -1649,7 +1806,7 @@ const state = {
         const hasSession = await checkSession();
         if (hasSession) {
           setView('matrix');
-          await loadTeam();
+          await loadTeams();
           await loadTasks();
           // Initialize Budget Dashboard
           if (window.BudgetDashboard) {
@@ -1665,3 +1822,5 @@ const state = {
         showToast('No se pudo inicializar la app', true);
       }
     })();
+
+

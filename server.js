@@ -78,6 +78,13 @@ function sanitizeNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function toOptionalPositiveInt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return n;
+}
+
 function isValidHexColor(value) {
   return /^#[0-9a-fA-F]{6}$/.test(String(value || ''));
 }
@@ -221,55 +228,122 @@ app.get('/api/auth/me', authenticate, (req, res) => {
 });
 
 app.get('/api/tasks', authenticate, (req, res) => {
-  db.all('SELECT * FROM tasks WHERE user_id = ? ORDER BY position ASC, id DESC', [req.userId], (err, rows) => {
+  db.all(
+    `SELECT t.*, tm.name AS team_name, au.username AS assigned_username
+     FROM tasks t
+     LEFT JOIN teams tm ON tm.id = t.team_id
+     LEFT JOIN users au ON au.id = t.assigned_user_id
+     WHERE t.user_id = ?
+     ORDER BY t.position ASC, t.id DESC`,
+    [req.userId],
+    (err, rows) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
     return res.json(rows);
-  });
+    }
+  );
 });
 
 app.post('/api/tasks', authenticate, (req, res) => {
-  const { title, description = '', quadrant, assigned = '', category = '', fecha = '', completed = 0 } = req.body;
+  const {
+    title,
+    description = '',
+    quadrant,
+    assigned = '',
+    category = '',
+    fecha = '',
+    completed = 0,
+    team_id,
+    assigned_user_id
+  } = req.body;
 
   if (!title || !quadrant) {
     return res.status(400).json({ error: 'title and quadrant are required' });
   }
 
-  const startedAt = quadrant === IN_PROGRESS_QUADRANT && !completed ? nowIso() : null;
-  const everInProgress = quadrant === IN_PROGRESS_QUADRANT ? 1 : 0;
-  const sql = `
-    INSERT INTO tasks (
-      title, description, quadrant, assigned, category, fecha, completed, user_id,
-      in_progress_seconds, in_progress_started_at, ever_in_progress
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-  const params = [
-    title.trim(),
-    description.trim(),
-    quadrant,
-    assigned.trim(),
-    category.trim(),
-    String(fecha || '').trim(),
-    completed ? 1 : 0,
-    req.userId,
-    0,
-    startedAt,
-    everInProgress
-  ];
+  const normalizedTeamId = toOptionalPositiveInt(team_id);
+  const normalizedAssignedUserId = toOptionalPositiveInt(assigned_user_id);
+  if (assigned_user_id !== undefined && assigned_user_id !== null && assigned_user_id !== '' && !normalizedAssignedUserId) {
+    return res.status(400).json({ error: 'assigned_user_id invalido' });
+  }
+  if (team_id !== undefined && team_id !== null && team_id !== '' && !normalizedTeamId) {
+    return res.status(400).json({ error: 'team_id invalido' });
+  }
+  if (normalizedAssignedUserId && !normalizedTeamId) {
+    return res.status(400).json({ error: 'Debe indicar team_id para asignar un usuario' });
+  }
 
-  db.run(sql, params, function runCallback(err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+  const validateAndInsert = () => {
+    const startedAt = quadrant === IN_PROGRESS_QUADRANT && !completed ? nowIso() : null;
+    const everInProgress = quadrant === IN_PROGRESS_QUADRANT ? 1 : 0;
+    const sql = `
+      INSERT INTO tasks (
+        title, description, quadrant, assigned, category, fecha, completed, user_id,
+        in_progress_seconds, in_progress_started_at, ever_in_progress, team_id, assigned_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    const params = [
+      title.trim(),
+      description.trim(),
+      quadrant,
+      assigned.trim(),
+      category.trim(),
+      String(fecha || '').trim(),
+      completed ? 1 : 0,
+      req.userId,
+      0,
+      startedAt,
+      everInProgress,
+      normalizedTeamId,
+      normalizedAssignedUserId
+    ];
 
-    db.get('SELECT * FROM tasks WHERE id = ?', [this.lastID], (selectErr, row) => {
-      if (selectErr) {
-        return res.status(500).json({ error: selectErr.message });
+    db.run(sql, params, function runCallback(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
       }
-      return res.status(201).json(row);
+
+      db.get(
+        `SELECT t.*, tm.name AS team_name, au.username AS assigned_username
+         FROM tasks t
+         LEFT JOIN teams tm ON tm.id = t.team_id
+         LEFT JOIN users au ON au.id = t.assigned_user_id
+         WHERE t.id = ?`,
+        [this.lastID],
+        (selectErr, row) => {
+          if (selectErr) {
+            return res.status(500).json({ error: selectErr.message });
+          }
+          return res.status(201).json(row);
+        }
+      );
     });
-  });
+  };
+
+  if (normalizedTeamId) {
+    db.get('SELECT id FROM teams WHERE id = ? AND user_id = ?', [normalizedTeamId, req.userId], (teamErr, teamRow) => {
+      if (teamErr) return res.status(500).json({ error: teamErr.message });
+      if (!teamRow) return res.status(400).json({ error: 'El equipo seleccionado no existe' });
+
+      if (!normalizedAssignedUserId) {
+        return validateAndInsert();
+      }
+
+      db.get(
+        'SELECT 1 FROM team_memberships WHERE team_id = ? AND member_user_id = ?',
+        [normalizedTeamId, normalizedAssignedUserId],
+        (memberErr, memberRow) => {
+          if (memberErr) return res.status(500).json({ error: memberErr.message });
+          if (!memberRow) return res.status(400).json({ error: 'El usuario asignado no pertenece al equipo seleccionado' });
+          return validateAndInsert();
+        }
+      );
+    });
+    return;
+  }
+
+  return validateAndInsert();
 });
 
 app.put('/api/tasks/reorder', authenticate, (req, res) => {
@@ -349,7 +423,7 @@ app.put('/api/tasks/:id', authenticate, (req, res) => {
 
 app.patch('/api/tasks/:id', authenticate, (req, res) => {
   const { id } = req.params;
-  const allowedFields = ['title', 'description', 'assigned', 'category', 'quadrant', 'fecha', 'completed'];
+  const allowedFields = ['title', 'description', 'assigned', 'category', 'quadrant', 'fecha', 'completed', 'team_id', 'assigned_user_id'];
   db.get('SELECT * FROM tasks WHERE id = ? AND user_id = ?', [id, req.userId], (selectErr, task) => {
     if (selectErr) {
       return res.status(500).json({ error: selectErr.message });
@@ -362,6 +436,8 @@ app.patch('/api/tasks/:id', authenticate, (req, res) => {
     const params = [];
     let nextQuadrant = task.quadrant;
     let nextCompleted = Number(task.completed || 0);
+    let nextTeamId = task.team_id ? Number(task.team_id) : null;
+    let nextAssignedUserId = task.assigned_user_id ? Number(task.assigned_user_id) : null;
 
     for (const field of allowedFields) {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
@@ -379,6 +455,24 @@ app.patch('/api/tasks/:id', authenticate, (req, res) => {
           const normalizedCompleted = value === true || value === 1 || value === '1' ? 1 : 0;
           nextCompleted = normalizedCompleted;
           value = normalizedCompleted;
+        }
+        if (field === 'team_id') {
+          if (value === '' || value === null) {
+            value = null;
+          } else {
+            value = toOptionalPositiveInt(value);
+            if (!value) return res.status(400).json({ error: 'team_id invalido' });
+          }
+          nextTeamId = value;
+        }
+        if (field === 'assigned_user_id') {
+          if (value === '' || value === null) {
+            value = null;
+          } else {
+            value = toOptionalPositiveInt(value);
+            if (!value) return res.status(400).json({ error: 'assigned_user_id invalido' });
+          }
+          nextAssignedUserId = value;
         }
 
         updates.push(`${field} = ?`);
@@ -416,22 +510,56 @@ app.patch('/api/tasks/:id', authenticate, (req, res) => {
     updates.push('ever_in_progress = ?');
     params.push(everInProgress ? 1 : 0);
 
-    params.push(id, req.userId);
-    db.run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params, function runCallback(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+    if (nextAssignedUserId && !nextTeamId) {
+      return res.status(400).json({ error: 'Debe indicar team_id para asignar un usuario' });
+    }
 
-      if (this.changes === 0) {
-        return res.status(404).json({ error: 'Task not found' });
-      }
-
-      db.get('SELECT * FROM tasks WHERE id = ?', [id], (selectUpdatedErr, row) => {
-        if (selectUpdatedErr) {
-          return res.status(500).json({ error: selectUpdatedErr.message });
+    const persistTaskChanges = () => {
+      params.push(id, req.userId);
+      db.run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params, function runCallback(err) {
+        if (err) {
+          return res.status(500).json({ error: err.message });
         }
-        return res.json(row);
+
+        if (this.changes === 0) {
+          return res.status(404).json({ error: 'Task not found' });
+        }
+
+        db.get(
+          `SELECT t.*, tm.name AS team_name, au.username AS assigned_username
+           FROM tasks t
+           LEFT JOIN teams tm ON tm.id = t.team_id
+           LEFT JOIN users au ON au.id = t.assigned_user_id
+           WHERE t.id = ?`,
+          [id],
+          (selectUpdatedErr, row) => {
+            if (selectUpdatedErr) {
+              return res.status(500).json({ error: selectUpdatedErr.message });
+            }
+            return res.json(row);
+          }
+        );
       });
+    };
+
+    if (!nextTeamId) {
+      return persistTaskChanges();
+    }
+
+    db.get('SELECT id FROM teams WHERE id = ? AND user_id = ?', [nextTeamId, req.userId], (teamErr, team) => {
+      if (teamErr) return res.status(500).json({ error: teamErr.message });
+      if (!team) return res.status(400).json({ error: 'El equipo seleccionado no existe' });
+      if (!nextAssignedUserId) return persistTaskChanges();
+
+      db.get(
+        'SELECT 1 FROM team_memberships WHERE team_id = ? AND member_user_id = ?',
+        [nextTeamId, nextAssignedUserId],
+        (memberErr, member) => {
+          if (memberErr) return res.status(500).json({ error: memberErr.message });
+          if (!member) return res.status(400).json({ error: 'El usuario asignado no pertenece al equipo seleccionado' });
+          return persistTaskChanges();
+        }
+      );
     });
   });
 });
@@ -453,38 +581,144 @@ app.delete('/api/tasks/:id', authenticate, (req, res) => {
 });
 
 // Team API
+app.get('/api/teams', authenticate, (req, res) => {
+  db.all('SELECT id, name, user_id, created_at FROM teams WHERE user_id = ? ORDER BY name ASC', [req.userId], (err, teams) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+
+    if (!teams.length) return res.json([]);
+
+    const teamIds = teams.map((t) => t.id);
+    const placeholders = teamIds.map(() => '?').join(', ');
+    db.all(
+      `SELECT tm.team_id, tm.member_user_id, u.username
+       FROM team_memberships tm
+       JOIN users u ON u.id = tm.member_user_id
+       WHERE tm.team_id IN (${placeholders})
+       ORDER BY u.username ASC`,
+      teamIds,
+      (membersErr, rows) => {
+        if (membersErr) return res.status(500).json({ error: membersErr.message });
+        const membersByTeam = new Map();
+        rows.forEach((row) => {
+          if (!membersByTeam.has(row.team_id)) membersByTeam.set(row.team_id, []);
+          membersByTeam.get(row.team_id).push({
+            user_id: row.member_user_id,
+            username: row.username
+          });
+        });
+
+        return res.json(
+          teams.map((team) => ({
+            ...team,
+            members: membersByTeam.get(team.id) || []
+          }))
+        );
+      }
+    );
+  });
+});
+
+app.post('/api/teams', authenticate, (req, res) => {
+  const name = sanitizeText(req.body?.name, 120);
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  db.run('INSERT INTO teams (name, user_id) VALUES (?, ?)', [name, req.userId], function(err) {
+    if (err) {
+      if (isUniqueViolation(err)) return res.status(400).json({ error: 'Team already exists' });
+      return res.status(500).json({ error: err.message });
+    }
+    return res.status(201).json({ id: this.lastID, name, user_id: req.userId, members: [] });
+  });
+});
+
+app.delete('/api/teams/:id', authenticate, (req, res) => {
+  const teamId = toOptionalPositiveInt(req.params.id);
+  if (!teamId) return res.status(400).json({ error: 'team id invalido' });
+  db.run(
+    'UPDATE tasks SET team_id = NULL, assigned_user_id = NULL, assigned = ? WHERE user_id = ? AND team_id = ?',
+    ['', req.userId, teamId],
+    (updateErr) => {
+      if (updateErr) return res.status(500).json({ error: updateErr.message });
+      db.run('DELETE FROM teams WHERE id = ? AND user_id = ?', [teamId, req.userId], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Team not found' });
+        return res.json({ id: teamId, deleted: true });
+      });
+    }
+  );
+});
+
+app.post('/api/teams/:id/members', authenticate, (req, res) => {
+  const teamId = toOptionalPositiveInt(req.params.id);
+  if (!teamId) return res.status(400).json({ error: 'team id invalido' });
+  const username = sanitizeText(req.body?.username, 80);
+  if (!username) return res.status(400).json({ error: 'username is required' });
+
+  db.get('SELECT id FROM teams WHERE id = ? AND user_id = ?', [teamId, req.userId], (teamErr, team) => {
+    if (teamErr) return res.status(500).json({ error: teamErr.message });
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+
+    db.get('SELECT id, username FROM users WHERE username = ?', [username], (userErr, user) => {
+      if (userErr) return res.status(500).json({ error: userErr.message });
+      if (!user) return res.status(400).json({ error: 'El usuario no existe' });
+
+      db.run(
+        'INSERT INTO team_memberships (team_id, member_user_id) VALUES (?, ?)',
+        [teamId, user.id],
+        function(insertErr) {
+          if (insertErr) {
+            if (isUniqueViolation(insertErr)) return res.status(400).json({ error: 'El usuario ya pertenece a este equipo' });
+            return res.status(500).json({ error: insertErr.message });
+          }
+          return res.status(201).json({ team_id: teamId, user_id: user.id, username: user.username });
+        }
+      );
+    });
+  });
+});
+
+app.delete('/api/teams/:id/members/:memberUserId', authenticate, (req, res) => {
+  const teamId = toOptionalPositiveInt(req.params.id);
+  const memberUserId = toOptionalPositiveInt(req.params.memberUserId);
+  if (!teamId || !memberUserId) return res.status(400).json({ error: 'id invalido' });
+
+  db.run(
+    `DELETE FROM team_memberships
+     WHERE team_id = ?
+       AND member_user_id = ?
+       AND team_id IN (SELECT id FROM teams WHERE id = ? AND user_id = ?)`,
+    [teamId, memberUserId, teamId, req.userId],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Team member not found' });
+      db.run(
+        'UPDATE tasks SET assigned_user_id = NULL, assigned = ? WHERE user_id = ? AND team_id = ? AND assigned_user_id = ?',
+        ['', req.userId, teamId, memberUserId],
+        (updateErr) => {
+          if (updateErr) return res.status(500).json({ error: updateErr.message });
+          return res.json({ team_id: teamId, user_id: memberUserId, deleted: true });
+        }
+      );
+    }
+  );
+});
+
+// Legacy endpoint compatibility
 app.get('/api/team', authenticate, (req, res) => {
-  db.all('SELECT * FROM team_members WHERE user_id = ? ORDER BY name ASC', [req.userId], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
+  db.all(
+    `SELECT tm.id AS team_id, tm.name AS team_name, u.id AS id, u.username AS name
+     FROM teams tm
+     JOIN team_memberships tms ON tms.team_id = tm.id
+     JOIN users u ON u.id = tms.member_user_id
+     WHERE tm.user_id = ?
+     ORDER BY tm.name ASC, u.username ASC`,
+    [req.userId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      return res.json(rows);
     }
-    return res.json(rows);
-  });
-});
-
-app.post('/api/team', authenticate, (req, res) => {
-  const { name } = req.body;
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'name is required' });
-  }
-
-  const sql = 'INSERT INTO team_members (name, user_id) VALUES (?, ?)';
-  db.run(sql, [name.trim(), req.userId], function(err) {
-    if (err) {
-      if (isUniqueViolation(err)) return res.status(400).json({ error: 'Team member already exists' });
-      return res.status(500).json({ error: err.message });
-    }
-    res.status(201).json({ id: this.lastID, name: name.trim() });
-  });
-});
-
-app.delete('/api/team/:id', authenticate, (req, res) => {
-  const { id } = req.params;
-  db.run('DELETE FROM team_members WHERE id = ? AND user_id = ?', [id, req.userId], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Team member not found' });
-    return res.json({ id: Number(id), deleted: true });
-  });
+  );
 });
 
 // Gastos API

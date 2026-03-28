@@ -23,16 +23,23 @@
       <section class="sidebar-section">
         <h2>Filtros</h2>
         <div class="filter-group">
-          <label class="filter-label">Categorías</label>
+          <label class="filter-label">CategorÃ­as</label>
           <div class="filter-list" id="filterList"></div>
         </div>
         <div class="filter-group">
-          <label class="filter-label">Equipo (Asignado a)</label>
+          <label class="filter-label">Equipo</label>
+          <select id="sidebarTeamSelector" class="filter-select">
+            <option value="">Todos los equipos</option>
+          </select>
           <div class="team-avatars" id="teamAvatars">
             <!-- Avatares dinámicos -->
           </div>
           <form id="addTeamForm" class="add-inline-form">
-            <input type="text" id="newTeamMember" placeholder="Nuevo miembro..." required>
+            <input type="text" id="newTeamName" placeholder="Nuevo equipo..." required>
+            <button type="submit">+</button>
+          </form>
+          <form id="addTeamMemberForm" class="add-inline-form">
+            <input type="text" id="newTeamMemberUsername" placeholder="Usuario para equipo..." required>
             <button type="submit">+</button>
           </form>
         </div>
@@ -42,7 +49,7 @@
         <div class="backlog-list" id="backlogList"></div>
       </section>
       <section class="sidebar-section">
-        <h2>Gestión de Categorías</h2>
+        <h2>GestiÃ³n de CategorÃ­as</h2>
         <div class="category-color-list" id="categoryColorList"></div>
         <form id="addCategoryForm" class="add-inline-form" style="margin-top: 8px;">
           <input type="text" id="newCategoryName" placeholder="Nueva..." required>
@@ -61,15 +68,15 @@
         <button id="invViewBtn" class="view-btn" type="button">Inversiones</button>
           <button id="darkModeBtn" class="view-btn toggle-dark" type="button" aria-label="Modo Oscuro" data-app-icon="darkModeMoon"></button>
         </div>
-        <button id="logoutBtn" class="view-btn logout-btn" type="button" hidden style="border: 1px solid var(--line);">Cerrar Sesión</button>
+        <button id="logoutBtn" class="view-btn logout-btn" type="button" hidden style="border: 1px solid var(--line);">Cerrar SesiÃ³n</button>
       </header>
 
       <section id="authPanel" class="auth-panel" hidden>
         <div class="auth-card">
-          <h1 id="authTitle">Iniciar Sesión</h1>
+          <h1 id="authTitle">Iniciar SesiÃ³n</h1>
           <form id="authForm" class="auth-form">
             <input id="authUsername" type="text" placeholder="Usuario" required />
-            <input id="authPassword" type="password" placeholder="Contraseña" required />
+            <input id="authPassword" type="password" placeholder="ContraseÃ±a" required />
             <p id="authError" class="auth-error"></p>
             <button id="authSubmitBtn" type="submit">Ingresar</button>
           </form>
@@ -83,6 +90,9 @@
         <form class="task-form" id="taskForm" method="dialog">
           <h1>Tarea</h1>
           <input id="title" type="text" placeholder="Titulo" required />
+          <select id="teamId" class="filter-select">
+            <option value="">Sin equipo</option>
+          </select>
           <select id="assigned" class="filter-select">
             <option value="">Sin asignar</option>
           </select>
@@ -168,22 +178,22 @@
           </div>
         </div>
 
-        <!-- Liquidez de Inversión -->
+        <!-- Liquidez de InversiÃ³n -->
         <div class="inv-liquidez-box" id="invLiquidezBox" style="background: var(--bg-card); padding: 1rem; border-radius: 8px; border-left: 4px solid #22c55e; margin-bottom: 1rem; display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap;">
           <div>
             <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);"><span data-app-icon="droplet"></span> LIQUIDEZ DISPONIBLE PARA INVERTIR</h4>
             <p id="invLiquidezNeta" style="margin:0; font-size: 1.5rem; font-weight: bold; color: #22c55e;">$0.00</p>
           </div>
           <div style="font-size: 0.8rem; color: var(--text-200); flex: 1;">
-            <span>Bruta: <strong id="invLiquidezBruta">$0.00</strong></span> &nbsp;—&nbsp;
+            <span>Bruta: <strong id="invLiquidezBruta">$0.00</strong></span> &nbsp;â€”&nbsp;
             <span>Usado en activos: <strong id="invLiquidezDescuentos">$0.00</strong></span>
           </div>
         </div>
 
-        <h4 style="margin-bottom: 0.5rem; color: var(--text-200);">Totales Globales (Auditoría Patrimonial)</h4>
+        <h4 style="margin-bottom: 0.5rem; color: var(--text-200);">Totales Globales (AuditorÃ­a Patrimonial)</h4>
         <div class="inv-summary-boxes" style="display: flex; gap: 1rem; margin-bottom: 1rem;">
           <div class="inv-box" style="flex: 1; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
-            <h4 style="margin:0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-200);">Invertido Histórico Total</h4>
+            <h4 style="margin:0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-200);">Invertido HistÃ³rico Total</h4>
             <p id="invTotalInvertido" style="margin:0; font-size: 1.5rem; font-weight: bold;">$0.00</p>
           </div>
           <div class="inv-box" style="flex: 1; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
@@ -198,8 +208,8 @@
 
         <div class="inv-tabs" style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
           <button class="inv-tab-btn filter-btn active" data-target="invPositionsTab" type="button">Posiciones</button>
-          <button class="inv-tab-btn filter-btn" data-target="invCargaTab" type="button">Cargar Operación</button>
-          <button class="inv-tab-btn filter-btn" data-target="invGraficosTab" type="button">Gráficos</button>
+          <button class="inv-tab-btn filter-btn" data-target="invCargaTab" type="button">Cargar OperaciÃ³n</button>
+          <button class="inv-tab-btn filter-btn" data-target="invGraficosTab" type="button">GrÃ¡ficos</button>
         </div>
 
         <div id="invPositionsTab" class="inv-tab-content">
@@ -225,33 +235,33 @@
 
         <div id="invCargaTab" class="inv-tab-content" hidden>
           <form id="invTransaccionForm" class="expense-form">
-            <h4 style="margin-bottom: 1rem;">Registrar Transacción (Ingreso/Egreso)</h4>
+            <h4 style="margin-bottom: 1rem;">Registrar TransacciÃ³n (Ingreso/Egreso)</h4>
             <div class="expense-inputs">
               <select id="invTxActivo" required class="filter-select">
                 <option value="">Seleccione Activo...</option>
               </select>
               <select id="invTxTipo" required class="filter-select">
-                <option value="INGRESO">Ingreso (Compra/Depósito)</option>
+                <option value="INGRESO">Ingreso (Compra/DepÃ³sito)</option>
                 <option value="EGRESO">Egreso (Venta/Retiro)</option>
               </select>
               <input type="number" id="invTxCantidad" step="0.000001" placeholder="Cantidad" required />
-              <input type="number" id="invTxPrecio" step="0.01" placeholder="Precio Operación Unitaro" required />
+              <input type="number" id="invTxPrecio" step="0.01" placeholder="Precio OperaciÃ³n Unitaro" required />
               <select id="invTxMoneda" required class="filter-select">
                 <option value="ARS">Operado en ARS</option>
                 <option value="USD">Operado en USD</option>
               </select>
               <input type="date" id="invTxFecha" required />
-              <input type="number" id="invTxTna" step="0.01" placeholder="TNA (%) (Obligatorio para Plazo Fijo/Caución)" hidden />
+              <input type="number" id="invTxTna" step="0.01" placeholder="TNA (%) (Obligatorio para Plazo Fijo/CauciÃ³n)" hidden />
               <label style="display:flex; flex-direction:column; gap:4px; font-size:0.9rem;">
                 ¿Restar de Liquidez de Inversión?
                 <select id="invTxRestaLiquidez" class="filter-select">
                   <option value="no">No (el dinero proviene de otro origen)</option>
-                  <option value="si">Sí (descontar de mi liquidez acumulada)</option>
+                  <option value="si">SÃ­ (descontar de mi liquidez acumulada)</option>
                 </select>
               </label>
             </div>
             <div class="form-actions" style="margin-top: 1rem;">
-              <button type="submit">Guardar Transacción</button>
+              <button type="submit">Guardar TransacciÃ³n</button>
               <button type="button" class="cancel-btn" id="invNewActivoBtn">Crear Nuevo Activo</button>
             </div>
           </form>
@@ -264,16 +274,16 @@
               <input type="text" id="invActSector" placeholder="Sector (Escriba nuevo o existente)" required list="invSectorSuggestions" />
               <datalist id="invSectorSuggestions"></datalist>
               <select id="invActClase" required class="filter-select">
-                <option value="Acción">Acción</option>
+                <option value="AcciÃ³n">AcciÃ³n</option>
                 <option value="Bono">Bono</option>
                 <option value="Cripto">Cripto</option>
                 <option value="CEDEAR">CEDEAR</option>
                 <option value="Plazo Fijo">Plazo Fijo</option>
-                <option value="Caución">Caución</option>
+                <option value="CauciÃ³n">CauciÃ³n</option>
               </select>
               <select id="invActProvider" class="filter-select">
-                <option value="manual">Actualización Manual</option>
-                <option value="yahoo">Yahoo Finance Automático</option>
+                <option value="manual">ActualizaciÃ³n Manual</option>
+                <option value="yahoo">Yahoo Finance AutomÃ¡tico</option>
               </select>
               <input type="text" id="invActProviderId" placeholder="Tick para Yahoo (Ej: AAPL.BA)" />
             </div>
@@ -287,11 +297,11 @@
         <div id="invGraficosTab" class="inv-tab-content" hidden>
           <div class="inv-charts-layout" style="display: flex; gap: 2rem; flex-wrap: wrap;">
             <div class="inv-chart-container" style="flex: 1; min-width: 300px; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
-              <h4 style="text-align:center; margin-bottom:1rem;">Distribución por Sector</h4>
+              <h4 style="text-align:center; margin-bottom:1rem;">DistribuciÃ³n por Sector</h4>
               <canvas id="invSectorChart"></canvas>
             </div>
             <div class="inv-chart-container" style="flex: 1; min-width: 300px; background: var(--bg-card); padding: 1rem; border-radius: 8px;">
-              <h4 style="text-align:center; margin-bottom:1rem;">Distribución por Activo</h4>
+              <h4 style="text-align:center; margin-bottom:1rem;">DistribuciÃ³n por Activo</h4>
               <canvas id="invActivoChart"></canvas>
             </div>
           </div>
@@ -324,11 +334,11 @@
               <p id="ledgerTotalQty" style="margin:0; font-size: 1.2rem; font-weight: bold;">0.0000</p>
             </div>
             <div style="flex: 1;">
-              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Invertido Histórico</h4>
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Invertido HistÃ³rico</h4>
               <p id="ledgerTotalInv" style="margin:0; font-size: 1.2rem; font-weight: bold;">$0.00</p>
             </div>
             <div style="flex: 1;">
-              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">Valuación Actual</h4>
+              <h4 style="margin:0 0 0.25rem 0; font-size: 0.85rem; color: var(--text-200);">ValuaciÃ³n Actual</h4>
               <p id="ledgerTotalVal" style="margin:0; font-size: 1.2rem; font-weight: bold;">$0.00</p>
             </div>
           </div>

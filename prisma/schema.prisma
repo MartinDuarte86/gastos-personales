@@ -14,9 +14,12 @@ model User {
   salt         String
   createdAt    DateTime @default(now()) @map("created_at")
 
-  tasks       Task[]
+  tasks       Task[]           @relation("taskOwner")
+  assignedTasks Task[]         @relation("taskAssignedUser")
   expenses    Expense[]
   teamMembers TeamMember[]
+  teams       Team[]
+  teamLinks   TeamMembership[]
   cuentas     Cuenta[]
 
   @@map("users")
@@ -28,6 +31,8 @@ model Task {
   description        String?
   quadrant           String
   assigned           String?
+  teamId             Int?     @map("team_id")
+  assignedUserId     Int?     @map("assigned_user_id")
   category           String?
   fecha              String?
   completed          Int      @default(0)
@@ -37,7 +42,9 @@ model Task {
   everInProgress     Int      @default(0) @map("ever_in_progress")
   userId             Int?     @map("user_id")
 
-  user User? @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user         User? @relation("taskOwner", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  team         Team? @relation(fields: [teamId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assignedUser User? @relation("taskAssignedUser", fields: [assignedUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("tasks")
 }
@@ -66,6 +73,32 @@ model TeamMember {
 
   @@unique([name, userId])
   @@map("team_members")
+}
+
+model Team {
+  id        Int      @id @default(autoincrement())
+  name      String
+  userId    Int      @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  owner       User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  memberships TeamMembership[]
+  tasks       Task[]
+
+  @@unique([name, userId])
+  @@map("teams")
+}
+
+model TeamMembership {
+  teamId       Int      @map("team_id")
+  memberUserId Int      @map("member_user_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  team   Team @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  member User @relation(fields: [memberUserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([teamId, memberUserId])
+  @@map("team_memberships")
 }
 
 model InvSector {

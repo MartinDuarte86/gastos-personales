@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   description TEXT,
   quadrant TEXT NOT NULL,
   assigned TEXT,
+  team_id BIGINT,
+  assigned_user_id BIGINT,
   category TEXT,
   fecha TEXT,
   completed INTEGER DEFAULT 0,
@@ -49,6 +51,55 @@ CREATE TABLE IF NOT EXISTS team_members (
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   UNIQUE(name, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS teams (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(name, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS team_memberships (
+  team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  member_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY(team_id, member_user_id)
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'tasks' AND column_name = 'team_id'
+  ) THEN
+    ALTER TABLE tasks ADD COLUMN team_id BIGINT;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'tasks' AND column_name = 'assigned_user_id'
+  ) THEN
+    ALTER TABLE tasks ADD COLUMN assigned_user_id BIGINT;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_tasks_team'
+  ) THEN
+    ALTER TABLE tasks
+      ADD CONSTRAINT fk_tasks_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_tasks_assigned_user'
+  ) THEN
+    ALTER TABLE tasks
+      ADD CONSTRAINT fk_tasks_assigned_user FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_team_id ON tasks(team_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_user_id ON tasks(assigned_user_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_team_id ON team_memberships(team_id);
 
 CREATE TABLE IF NOT EXISTS inv_sectores (
   id_sector BIGSERIAL PRIMARY KEY,

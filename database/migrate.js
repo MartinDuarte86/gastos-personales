@@ -12,6 +12,8 @@ module.exports = function(db, callback) {
         description TEXT,
         quadrant TEXT NOT NULL,
         assigned TEXT,
+        team_id INTEGER,
+        assigned_user_id INTEGER,
         category TEXT,
         fecha TEXT,
         completed INTEGER DEFAULT 0,
@@ -55,6 +57,28 @@ module.exports = function(db, callback) {
       );
     `);
 
+    db.run(`
+      CREATE TABLE IF NOT EXISTS teams (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(name, user_id),
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS team_memberships (
+        team_id INTEGER NOT NULL,
+        member_user_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(team_id, member_user_id),
+        FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE,
+        FOREIGN KEY(member_user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `);
+
     // Retro-compatibility: add user_id column if tasks or expenses were created before auth
     db.all('PRAGMA table_info(tasks)', [], (err, columns) => {
       if (!err) {
@@ -69,6 +93,12 @@ module.exports = function(db, callback) {
         }
         if (!columns.some(c => c.name === 'ever_in_progress')) {
           db.run('ALTER TABLE tasks ADD COLUMN ever_in_progress INTEGER DEFAULT 0');
+        }
+        if (!columns.some(c => c.name === 'team_id')) {
+          db.run('ALTER TABLE tasks ADD COLUMN team_id INTEGER');
+        }
+        if (!columns.some(c => c.name === 'assigned_user_id')) {
+          db.run('ALTER TABLE tasks ADD COLUMN assigned_user_id INTEGER');
         }
       }
     });
