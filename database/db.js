@@ -3,6 +3,7 @@ const path = require('path');
 
 const DB_DRIVER = String(process.env.DB_DRIVER || '').trim().toLowerCase();
 const IS_PROD = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
 function normalizeDriver() {
   if (DB_DRIVER === 'postgres' || DB_DRIVER === 'postgresql') return 'postgres';
@@ -155,14 +156,18 @@ function initDb() {
     const pgAdapter = createPostgresAdapter();
     let bootstrapPromise = Promise.resolve();
     if (process.env.AUTO_DB_BOOTSTRAP === 'true') {
-      bootstrapPromise = pgAdapter.bootstrapFromSqlFile(path.join(__dirname, 'postgres', '001_bootstrap.sql'))
-        .then(() => {
-          console.log('PostgreSQL bootstrap checked from database/postgres/001_bootstrap.sql');
-        })
-        .catch((err) => {
-          console.error('PostgreSQL bootstrap failed:', err.message);
-          throw err;
-        });
+      if (IS_SERVERLESS) {
+        console.log('Skipping PostgreSQL bootstrap in serverless runtime; apply migrations before deploy.');
+      } else {
+        bootstrapPromise = pgAdapter.bootstrapFromSqlFile(path.join(__dirname, 'postgres', '001_bootstrap.sql'))
+          .then(() => {
+            console.log('PostgreSQL bootstrap checked from database/postgres/001_bootstrap.sql');
+          })
+          .catch((err) => {
+            console.error('PostgreSQL bootstrap failed:', err.message);
+            throw err;
+          });
+      }
     }
     return { ...pgAdapter, bootstrapPromise };
   }
