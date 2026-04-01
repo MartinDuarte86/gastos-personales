@@ -129,33 +129,42 @@ function createPostgresAdapter() {
 function createSqliteAdapter() {
   const sqlite3 = require('sqlite3').verbose();
   const DB_PATH = path.join(__dirname, '..', 'tareas.db');
+  let resolveBootstrap;
+  let rejectBootstrap;
+  const bootstrapPromise = new Promise((resolve, reject) => {
+    resolveBootstrap = resolve;
+    rejectBootstrap = reject;
+  });
   const db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) {
       console.error('Error opening SQLite database:', err.message);
+      rejectBootstrap(err);
       process.exit(1);
     }
     require('./migrate')(db, () => {
       console.log('SQLite ready and fully migrated at', DB_PATH);
+      resolveBootstrap();
     });
   });
-  return { driver: 'sqlite', db, dbPath: DB_PATH };
+  return { driver: 'sqlite', db, dbPath: DB_PATH, bootstrapPromise };
 }
 
 function initDb() {
   const driver = normalizeDriver();
   if (driver === 'postgres') {
     const pgAdapter = createPostgresAdapter();
+    let bootstrapPromise = Promise.resolve();
     if (process.env.AUTO_DB_BOOTSTRAP === 'true') {
-      pgAdapter.bootstrapFromSqlFile(path.join(__dirname, 'postgres', '001_bootstrap.sql'))
+      bootstrapPromise = pgAdapter.bootstrapFromSqlFile(path.join(__dirname, 'postgres', '001_bootstrap.sql'))
         .then(() => {
           console.log('PostgreSQL bootstrap checked from database/postgres/001_bootstrap.sql');
         })
         .catch((err) => {
           console.error('PostgreSQL bootstrap failed:', err.message);
-          process.exit(1);
+          throw err;
         });
     }
-    return pgAdapter;
+    return { ...pgAdapter, bootstrapPromise };
   }
   return createSqliteAdapter();
 }

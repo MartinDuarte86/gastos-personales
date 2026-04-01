@@ -305,10 +305,20 @@ function markResetTokenUsed(tokenHash) {
 }
 
 app.use(express.json({ limit: '256kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
-const { db, driver: DB_DRIVER } = initDb();
+const { db, driver: DB_DRIVER, bootstrapPromise = Promise.resolve() } = initDb();
 console.log(`Database driver active: ${DB_DRIVER}`);
+
+app.use((req, res, next) => {
+  Promise.resolve(bootstrapPromise)
+    .then(() => next())
+    .catch((err) => {
+      console.error('[db-bootstrap]', err?.message || err);
+      res.status(500).json({ error: 'Service temporarily unavailable' });
+    });
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 // AUTHENTICATION
 const authenticate = (req, res, next) => {
