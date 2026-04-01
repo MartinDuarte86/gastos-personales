@@ -227,7 +227,6 @@ CREATE TABLE IF NOT EXISTS gastos (
 CREATE INDEX IF NOT EXISTS idx_gastos_cuenta_fecha ON gastos(cuenta_id, fecha);
 CREATE INDEX IF NOT EXISTS idx_gastos_proyeccion ON gastos(proyeccion_id);
 CREATE INDEX IF NOT EXISTS idx_categorias_cuenta ON categorias(cuenta_id);
-CREATE INDEX IF NOT EXISTS idx_cuenta_equipos_team ON cuenta_equipos(team_id);
 CREATE INDEX IF NOT EXISTS idx_inv_activos_team ON inv_activos(team_id);
 CREATE INDEX IF NOT EXISTS idx_inv_transacciones_team ON inv_transacciones(team_id);
 
@@ -249,6 +248,8 @@ CREATE TABLE IF NOT EXISTS cuenta_equipos (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   PRIMARY KEY(cuenta_id, team_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_cuenta_equipos_team ON cuenta_equipos(team_id);
 
 INSERT INTO team_memberships (team_id, member_user_id)
 SELECT id, user_id
