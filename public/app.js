@@ -725,13 +725,100 @@ const state = {
       });
     }
 
+    function buildCategoryPalette(container, selectedColor, onSelect) {
+      if (!container) return;
+      const activeColor = closestPaletteColor(selectedColor || '#FF0000');
+      container.innerHTML = '';
+      FIXED_CATEGORY_COLORS.forEach((color) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'color-swatch-btn' + (activeColor === color ? ' active' : '');
+        btn.style.background = color;
+        btn.addEventListener('click', () => onSelect(color));
+        container.appendChild(btn);
+      });
+    }
+
+    async function openCategoryEditor(category) {
+      const normalizedCategory = normalizeCategory(category);
+      if (!normalizedCategory) return;
+
+      document.getElementById('categoryEditorOverlay')?.remove();
+      const relatedTasks = state.tasks.filter((task) => normalizeCategory(task.category) === normalizedCategory);
+      const initialColor = getCategoryHex(category);
+
+      const overlay = document.createElement('div');
+      overlay.id = 'categoryEditorOverlay';
+      overlay.className = 'modal-overlay modal-overlay-front';
+      overlay.innerHTML = `
+        <div class="modal-box category-editor-modal">
+          <h3>Editar categoria</h3>
+          <p class="modal-helper-copy">Actualiza el nombre visible y el color que se usa en las tareas de esta categoria.</p>
+          <form id="categoryEditorForm" autocomplete="off">
+            <label>Nombre
+              <input type="text" id="categoryEditorName" value="${escapeHtml(category)}" required>
+            </label>
+            <label>Color</label>
+            <input type="hidden" id="categoryEditorColor" value="${initialColor}">
+            <div id="categoryEditorPalette" class="color-swatch-group"></div>
+            <p class="category-editor-meta">${relatedTasks.length} tarea(s) usan esta categoria.</p>
+            <div class="modal-actions">
+              <button type="button" id="categoryEditorCancel" class="btn-secondary">Cancelar</button>
+              <button type="submit" class="btn-primary">Guardar cambios</button>
+            </div>
+          </form>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const colorInput = document.getElementById('categoryEditorColor');
+      const palette = document.getElementById('categoryEditorPalette');
+      const renderPalette = () => buildCategoryPalette(palette, colorInput.value, (color) => {
+        colorInput.value = color;
+        renderPalette();
+      });
+      renderPalette();
+
+      const close = () => overlay.remove();
+      document.getElementById('categoryEditorCancel')?.addEventListener('click', close);
+
+      document.getElementById('categoryEditorForm')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const nextName = document.getElementById('categoryEditorName').value.trim();
+        const nextColor = closestPaletteColor(colorInput.value);
+        const nextNormalized = normalizeCategory(nextName);
+        if (!nextName || !nextNormalized) return;
+
+        try {
+          if (nextNormalized !== normalizedCategory) {
+            for (const task of relatedTasks) {
+              await api(`/api/tasks/${task.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category: nextName })
+              });
+            }
+            delete state.categoryColors[normalizedCategory];
+          }
+
+          state.categoryColors[nextNormalized] = nextColor;
+          saveCategoryColors();
+          close();
+          await loadTasks();
+          showToast(nextNormalized !== normalizedCategory ? 'Categoria actualizada en las tareas' : 'Color de categoria actualizado');
+        } catch (error) {
+          showToast(error.message || 'No se pudo actualizar la categoria', true);
+        }
+      });
+    }
+
     function renderCategoryColorList() {
-      const categories = getUniqueCategories();
+      const categories = getUniqueCategories().sort((a, b) => a.localeCompare(b, 'es'));
       categoryColorList.innerHTML = '';
 
       if (categories.length === 0) {
         const empty = document.createElement('p');
-        empty.className = 'task-meta';
+        empty.className = 'category-empty';
         empty.textContent = 'No hay categorias todavia.';
         categoryColorList.appendChild(empty);
         return;
@@ -739,32 +826,22 @@ const state = {
 
       categories.forEach((category) => {
         const row = document.createElement('div');
-        row.className = 'category-color-item';
+        row.className = 'category-color-item category-row-card';
 
-        const name = document.createElement('span');
-        name.className = 'category-color-name';
-        name.textContent = category;
-
-        row.appendChild(name);
-        const swatches = document.createElement('div');
-        swatches.className = 'color-swatch-group';
-        FIXED_CATEGORY_COLORS.forEach((color) => {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'color-swatch-btn' + (getCategoryHex(category) === color ? ' active' : '');
-          btn.style.background = color;
-          btn.title = `Color ${color}`;
-          btn.addEventListener('click', () => {
-            const normalized = normalizeCategory(category);
-            state.categoryColors[normalized] = color;
-            saveCategoryColors();
-            renderCategoryColorList();
-            renderBoard();
-            renderCalendar();
-          });
-          swatches.appendChild(btn);
+        const taskCount = state.tasks.filter((task) => normalizeCategory(task.category) === normalizeCategory(category)).length;
+        row.innerHTML = `
+          <div class="category-row-main">
+            <span class="category-row-dot" style="background:${getCategoryHex(category)}"></span>
+            <div class="category-row-copy">
+              <strong class="category-color-name">${escapeHtml(category)}</strong>
+              <span class="category-row-meta">${taskCount} tarea(s)</span>
+            </div>
+          </div>
+          <button type="button" class="btn-sm category-edit-btn">Editar</button>
+        `;
+        row.querySelector('.category-edit-btn')?.addEventListener('click', () => {
+          openCategoryEditor(category);
         });
-        row.appendChild(swatches);
         categoryColorList.appendChild(row);
       });
     }
@@ -1764,17 +1841,9 @@ const state = {
       const hiddenInput = document.getElementById('newCategoryColor');
       const current = closestPaletteColor(hiddenInput?.value || '#FF0000');
       if (hiddenInput) hiddenInput.value = current;
-      newCategoryPalette.innerHTML = '';
-      FIXED_CATEGORY_COLORS.forEach((color) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'color-swatch-btn' + (current === color ? ' active' : '');
-        btn.style.background = color;
-        btn.addEventListener('click', () => {
-          if (hiddenInput) hiddenInput.value = color;
-          renderNewCategoryPalette();
-        });
-        newCategoryPalette.appendChild(btn);
+      buildCategoryPalette(newCategoryPalette, current, (color) => {
+        if (hiddenInput) hiddenInput.value = color;
+        renderNewCategoryPalette();
       });
     }
     

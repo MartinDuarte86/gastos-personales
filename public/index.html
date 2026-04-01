@@ -41,14 +41,6 @@
           <label class="filter-label">Categorias</label>
           <div class="filter-list" id="filterList"></div>
         </div>
-        <div class="filter-group">
-          <label class="filter-label">Equipo</label>
-          <select id="sidebarTeamSelector" class="filter-select">
-            <option value="">Todos los equipos</option>
-          </select>
-          <div class="team-avatars" id="teamAvatars"></div>
-          <p class="sidebar-help">La gestion completa de equipos vive en su modulo dedicado.</p>
-        </div>
       </section>
 
       <section class="sidebar-section">
@@ -59,11 +51,11 @@
       <section class="sidebar-section">
         <h2>Gestion de categorias</h2>
         <div class="category-color-list" id="categoryColorList"></div>
-        <form id="addCategoryForm" class="add-inline-form add-inline-form-spaced">
-          <input type="text" id="newCategoryName" placeholder="Nueva..." required>
+        <form id="addCategoryForm" class="add-inline-form add-inline-form-spaced category-create-form">
+          <input type="text" id="newCategoryName" placeholder="Nueva categoria..." required>
           <input type="hidden" id="newCategoryColor" value="#FF0000">
           <div id="newCategoryPalette" class="color-swatch-group"></div>
-          <button type="submit">+</button>
+          <button type="submit">Agregar</button>
         </form>
       </section>
     </aside>
@@ -255,7 +247,7 @@
         <div id="budget-cuentas-list" class="panel-stack-list"></div>
       </section>
 
-      <section class="view-panel panel-frame" id="teamsPanel" hidden>
+      <section class="view-panel panel-stack" id="teamsPanel" hidden>
         <div class="panel-hero panel-hero-teams">
           <div>
             <p class="panel-kicker">Colaboracion</p>
@@ -263,7 +255,7 @@
           </div>
           <p class="panel-copy">Administra equipos, miembros y asignaciones desde un unico modulo para tareas, presupuesto mensual, calendario e inversiones.</p>
         </div>
-        <div class="teams-layout">
+        <div class="teams-layout panel-frame">
           <div class="teams-main-column">
             <div class="section-heading section-heading-split">
               <div>
@@ -311,7 +303,15 @@
         </div>
       </section>
 
-      <section class="inversiones view-panel panel-frame" id="inversionesPanel" hidden>
+      <section class="inversiones view-panel panel-stack inversiones-shell" id="inversionesPanel" hidden>
+        <div class="panel-hero panel-hero-investments">
+          <div>
+            <p class="panel-kicker">Capital</p>
+            <h3 class="panel-title">Inversiones y liquidez</h3>
+          </div>
+          <p class="panel-copy">Consulta posiciones, registra operaciones y sigue la liquidez vinculada a inversion sin perder la lectura global del capital.</p>
+        </div>
+        <div class="panel-frame inversiones-surface">
         <div class="inversiones-header">
           <div>
             <p class="panel-kicker">Capital</p>
@@ -450,6 +450,7 @@
               <canvas id="invActivoChart"></canvas>
             </div>
           </div>
+        </div>
         </div>
       </section>
 

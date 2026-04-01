@@ -571,19 +571,23 @@ window.BudgetDashboard = class {
       btn.addEventListener('click', e => this.showGastoModal(e.currentTarget.dataset.cuenta))
     );
     el.querySelectorAll('.btn-edit-gasto').forEach(btn =>
-      btn.addEventListener('click', e => this.editGasto(e.target.dataset.id))
+      btn.addEventListener('click', e => this.editGasto(e.currentTarget.dataset.id))
     );
     el.querySelectorAll('.btn-del-gasto').forEach(btn =>
-      btn.addEventListener('click', e => this.deleteGasto(e.target.dataset.id, e.target.dataset.tieneProy === 'true'))
+      btn.addEventListener('click', e => this.deleteGasto(e.currentTarget.dataset.id, e.currentTarget.dataset.tieneProy === 'true'))
     );
     el.querySelectorAll('.btn-edit-cuenta').forEach(btn =>
-      btn.addEventListener('click', e => { const c = this.cuentas.find(x => x.id === e.target.dataset.id); if (c) this.showCuentaModal(c); })
+      btn.addEventListener('click', e => {
+        const cuentaId = e.currentTarget.dataset.id;
+        const c = this.cuentas.find(x => String(x.id) === String(cuentaId));
+        if (c) this.showCuentaModal(c);
+      })
     );
     el.querySelectorAll('.btn-categorias').forEach(btn =>
-      btn.addEventListener('click', e => this.showCategoriasModal(e.target.dataset.id))
+      btn.addEventListener('click', e => this.showCategoriasModal(e.currentTarget.dataset.id))
     );
     el.querySelectorAll('.btn-presupuesto-mes').forEach(btn =>
-      btn.addEventListener('click', e => this.showPresupuestoMesModal(e.target.dataset.id))
+      btn.addEventListener('click', e => this.showPresupuestoMesModal(e.currentTarget.dataset.id))
     );
   }
 
@@ -648,19 +652,21 @@ window.BudgetDashboard = class {
       </div>`).join('');
 
     el.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', e => {
-      const c = this.cuentas.find(x => x.id === e.target.dataset.id);
+      const cuentaId = e.currentTarget.dataset.id;
+      const c = this.cuentas.find(x => String(x.id) === String(cuentaId));
       document.getElementById('gestion-cuentas-overlay')?.remove();
       if (c) this.showCuentaModal(c);
     }));
     el.querySelectorAll('.btn-cats').forEach(btn => btn.addEventListener('click', e => {
       document.getElementById('gestion-cuentas-overlay')?.remove();
-      this.showCategoriasModal(e.target.dataset.id);
+      this.showCategoriasModal(e.currentTarget.dataset.id);
     }));
     el.querySelectorAll('.btn-danger-sm').forEach(btn => btn.addEventListener('click', async e => {
-      const c = this.cuentas.find(x => x.id === e.target.dataset.id);
+      const cuentaId = e.currentTarget.dataset.id;
+      const c = this.cuentas.find(x => String(x.id) === String(cuentaId));
       if (!confirm(`¿Eliminar la cuenta "${c?.nombre}"? Se eliminarán todas sus categorías y gastos.`)) return;
       try {
-        await this.api('DELETE', `/api/presupuesto/cuentas/${e.target.dataset.id}`);
+        await this.api('DELETE', `/api/presupuesto/cuentas/${cuentaId}`);
         this.showToast('Cuenta eliminada');
         await this.loadCuentas();
         this._renderCuentasManageList();
@@ -833,27 +839,31 @@ window.BudgetDashboard = class {
       el.innerHTML = cats.map(cat => {
         const tipo = cat.tipo || 'EGRESO';
         return `
-        <div class="manage-item">
-          <div class="manage-item-info">
-            <span class="cat-dot cat-dot-inline" style="background:${cat.color_hex}"></span>
-            <strong>${this.escapeHtml(cat.nombre)}</strong>
-            ${this.tipoBadge(tipo)}
-            ${tipo === 'EGRESO' ? `<span class="cat-pct-badge">${cat.porcentaje_asignacion}%</span>` : ''}
+        <div class="manage-item budget-category-item">
+          <div class="manage-item-info budget-category-info">
+            <span class="cat-dot cat-dot-inline budget-category-dot" style="background:${cat.color_hex}"></span>
+            <div class="budget-category-copy">
+              <strong class="budget-category-name">${this.escapeHtml(cat.nombre)}</strong>
+              <div class="budget-category-meta">
+                ${this.tipoBadge(tipo)}
+                ${tipo === 'EGRESO' ? `<span class="cat-pct-badge">${cat.porcentaje_asignacion}% del presupuesto</span>` : ''}
+              </div>
+            </div>
           </div>
-          <div class="manage-item-actions">
-            <button class="btn-sm btn-edit-cat" data-id="${this.escapeHtml(cat.id)}" data-nombre="${this.escapeHtml(cat.nombre)}" data-pct="${cat.porcentaje_asignacion}" data-color="${this.escapeHtml(cat.color_hex)}" data-tipo="${this.escapeHtml(tipo)}">${this.icon('pencil', '&#x270F;&#xFE0F;')}</button>
-            <button class="btn-sm btn-danger-sm btn-del-cat" data-id="${cat.id}">${this.icon('trash', '&#x1F5D1;&#xFE0F;')}</button>
+          <div class="manage-item-actions budget-category-actions">
+            <button class="btn-sm btn-edit-cat" data-id="${this.escapeHtml(cat.id)}" data-nombre="${this.escapeHtml(cat.nombre)}" data-pct="${cat.porcentaje_asignacion}" data-color="${this.escapeHtml(cat.color_hex)}" data-tipo="${this.escapeHtml(tipo)}">Editar</button>
+            <button class="btn-sm btn-danger-sm btn-del-cat" data-id="${cat.id}">Eliminar</button>
           </div>
         </div>`;
       }).join('');
 
       el.querySelectorAll('.btn-edit-cat').forEach(btn => btn.addEventListener('click', e => {
-        const { id, nombre, pct, color, tipo } = e.target.dataset;
+        const { id, nombre, pct, color, tipo } = e.currentTarget.dataset;
         this.showEditCatModal(cuentaKey, { id, nombre, porcentaje_asignacion: Number(pct), color_hex: color, tipo: tipo || 'EGRESO' });
       }));
       el.querySelectorAll('.btn-del-cat').forEach(btn => btn.addEventListener('click', async e => {
         if (!confirm('¿Eliminar esta categoría?')) return;
-        const result = await this.api('DELETE', `/api/presupuesto/categorias/${e.target.dataset.id}`);
+        const result = await this.api('DELETE', `/api/presupuesto/categorias/${e.currentTarget.dataset.id}`);
         if (result.error) { this.showToast(result.error, 'error'); return; }
         this.showToast('Categoría eliminada');
         await this.loadCategoriasForCuenta(cuentaKey);
