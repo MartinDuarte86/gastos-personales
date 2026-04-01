@@ -5,8 +5,19 @@
 CREATE TABLE IF NOT EXISTS users (
   id BIGSERIAL PRIMARY KEY,
   username VARCHAR(80) UNIQUE NOT NULL,
+  email TEXT,
   password_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
+  password_version INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -100,6 +111,8 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_tasks_team_id ON tasks(team_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned_user_id ON tasks(assigned_user_id);
 CREATE INDEX IF NOT EXISTS idx_team_memberships_team_id ON team_memberships(team_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users (LOWER(email)) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
 
 CREATE TABLE IF NOT EXISTS inv_sectores (
   id_sector BIGSERIAL PRIMARY KEY,
@@ -117,7 +130,8 @@ CREATE TABLE IF NOT EXISTS inv_activos (
   api_id TEXT,
   precio_mercado DOUBLE PRECISION DEFAULT 0,
   fecha_ultimo_precio TIMESTAMPTZ,
-  user_id BIGINT REFERENCES users(id)
+  user_id BIGINT REFERENCES users(id),
+  team_id BIGINT REFERENCES teams(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS inv_transacciones (
@@ -130,7 +144,8 @@ CREATE TABLE IF NOT EXISTS inv_transacciones (
   moneda TEXT NOT NULL,
   resta_liquidez INTEGER NOT NULL DEFAULT 0,
   tna DOUBLE PRECISION,
-  user_id BIGINT REFERENCES users(id)
+  user_id BIGINT REFERENCES users(id),
+  team_id BIGINT REFERENCES teams(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS inv_config (
@@ -154,6 +169,13 @@ CREATE TABLE IF NOT EXISTS cuenta_usuarios (
   cuenta_id TEXT NOT NULL REFERENCES cuentas(id) ON DELETE CASCADE,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   PRIMARY KEY(cuenta_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS cuenta_equipos (
+  cuenta_id TEXT NOT NULL REFERENCES cuentas(id) ON DELETE CASCADE,
+  team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY(cuenta_id, team_id)
 );
 
 CREATE TABLE IF NOT EXISTS categorias (
@@ -184,6 +206,9 @@ CREATE TABLE IF NOT EXISTS gastos (
 CREATE INDEX IF NOT EXISTS idx_gastos_cuenta_fecha ON gastos(cuenta_id, fecha);
 CREATE INDEX IF NOT EXISTS idx_gastos_proyeccion ON gastos(proyeccion_id);
 CREATE INDEX IF NOT EXISTS idx_categorias_cuenta ON categorias(cuenta_id);
+CREATE INDEX IF NOT EXISTS idx_cuenta_equipos_team ON cuenta_equipos(team_id);
+CREATE INDEX IF NOT EXISTS idx_inv_activos_team ON inv_activos(team_id);
+CREATE INDEX IF NOT EXISTS idx_inv_transacciones_team ON inv_transacciones(team_id);
 
 CREATE TABLE IF NOT EXISTS presupuestos_mensuales (
   id TEXT PRIMARY KEY,
@@ -196,3 +221,8 @@ CREATE TABLE IF NOT EXISTS presupuestos_mensuales (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(cuenta_id, mes, anio)
 );
+
+INSERT INTO team_memberships (team_id, member_user_id)
+SELECT id, user_id
+FROM teams
+ON CONFLICT (team_id, member_user_id) DO NOTHING;

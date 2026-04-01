@@ -14,9 +14,12 @@
 
 const state = {
       token: null,
+      userId: null,
       username: null,
+      email: null,
       tasks: [],
       teams: [],
+      userSuggestions: [],
       filterCategories: [],
       filterAssignee: 'Todos',
       selectedSidebarTeamId: '',
@@ -31,15 +34,40 @@ const state = {
     };
 
     const authPanel = document.getElementById('authPanel');
+    const appBootSplash = document.getElementById('appBootSplash');
     const authForm = document.getElementById('authForm');
     const authUsernameInput = document.getElementById('authUsername');
+    const authEmailInput = document.getElementById('authEmail');
     const authPasswordInput = document.getElementById('authPassword');
     const authSubmitBtn = document.getElementById('authSubmitBtn');
     const authToggleModeBtn = document.getElementById('authToggleModeBtn');
+    const authForgotBtn = document.getElementById('authForgotBtn');
+    const authLegacyBtn = document.getElementById('authLegacyBtn');
+    const authLoginModeBtn = document.getElementById('authLoginModeBtn');
+    const authRegisterModeBtn = document.getElementById('authRegisterModeBtn');
+    const authModeSwitch = document.getElementById('authModeSwitch');
+    const authAuxActions = document.getElementById('authAuxActions');
     const authTitle = document.getElementById('authTitle');
+    const authCopy = document.getElementById('authCopy');
     const authError = document.getElementById('authError');
+    const authLegacyForm = document.getElementById('authLegacyForm');
+    const authLegacyUsername = document.getElementById('authLegacyUsername');
+    const authLegacyPassword = document.getElementById('authLegacyPassword');
+    const authLegacyError = document.getElementById('authLegacyError');
+    const authLegacyEmailForm = document.getElementById('authLegacyEmailForm');
+    const authLegacyEmail = document.getElementById('authLegacyEmail');
+    const authLegacyEmailError = document.getElementById('authLegacyEmailError');
+    const authForgotForm = document.getElementById('authForgotForm');
+    const authForgotEmail = document.getElementById('authForgotEmail');
+    const authForgotError = document.getElementById('authForgotError');
+    const authResetForm = document.getElementById('authResetForm');
+    const authResetPassword = document.getElementById('authResetPassword');
+    const authResetPasswordConfirm = document.getElementById('authResetPasswordConfirm');
+    const authResetError = document.getElementById('authResetError');
     const logoutBtn = document.getElementById('logoutBtn');
     let isRegisterMode = false;
+    let authMode = 'login';
+    let legacyCompletionToken = '';
 
     const searchInput = document.getElementById('searchInput');
     const assigneeFilter = document.getElementById('assigneeFilter');
@@ -60,11 +88,21 @@ const state = {
     const teamIdInput = document.getElementById('teamId');
     const assignedInput = document.getElementById('assigned');
     const sidebarTeamSelector = document.getElementById('sidebarTeamSelector');
+    const newTeamMemberUsernameInput = document.getElementById('newTeamMemberUsername');
+    const userMentionSuggestions = document.getElementById('userMentionSuggestions');
+    const teamDetailsCard = document.getElementById('teamDetailsCard');
+    const teamDetailsName = document.getElementById('teamDetailsName');
+    const teamMembersList = document.getElementById('teamMembersList');
+    const editTeamBtn = document.getElementById('editTeamBtn');
+    const deleteTeamBtn = document.getElementById('deleteTeamBtn');
+    const editTeamForm = document.getElementById('editTeamForm');
+    const editTeamNameInput = document.getElementById('editTeamName');
     const fechaInput = document.getElementById('fecha');
     const categoryInput = document.getElementById('category');
     const categoryColorInput = document.getElementById('categoryColor');
     const categorySuggestions = document.getElementById('categorySuggestions');
     const categoryColorList = document.getElementById('categoryColorList');
+    const newCategoryPalette = document.getElementById('newCategoryPalette');
     const submitBtn = taskForm.querySelector('button[type="submit"]');
     const cancelEditBtn = document.getElementById('cancelEditBtn');
     const matrixViewBtn = document.getElementById('matrixViewBtn');
@@ -94,6 +132,10 @@ const state = {
     const cancelExpenseEditBtn = document.getElementById('cancelExpenseEditBtn');
     const expensesTotal = document.getElementById('expensesTotal');
     const expensesList = document.getElementById('expensesList');
+    const teamsViewBtn = document.getElementById('teamsViewBtn');
+    const teamsPanel = document.getElementById('teamsPanel');
+    const teamsSummary = document.getElementById('teamsSummary');
+    const teamsCreateBtn = document.getElementById('teamsCreateBtn');
 
     const QUADRANTS = {
       en_progreso: 'En progreso',
@@ -105,6 +147,7 @@ const state = {
     const TASK_DRAG_TYPE = 'application/x-task-id';
     const WEEKDAYS = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
     const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const FIXED_CATEGORY_COLORS = ['#FF0000','#0000FF','#00FF00','#FFFF00','#00FFFF','#FF00FF','#FFFFFF','#808080','#FFA500'];
 
     async function api(path, options = {}) {
       const headers = { ...options.headers };
@@ -113,7 +156,8 @@ const state = {
       }
       const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
       if (!response.ok) {
-        if (response.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/register') {
+        const unauthenticatedAuthPaths = ['/api/auth/login', '/api/auth/register', '/api/auth/login-legacy', '/api/auth/complete-email', '/api/auth/forgot-password', '/api/auth/reset-password'];
+        if (response.status === 401 && !unauthenticatedAuthPaths.includes(path)) {
           logout();
         }
         const error = await response.json().catch(() => ({}));
@@ -124,7 +168,10 @@ const state = {
 
     function logout() {
       state.token = null;
+      state.userId = null;
       state.username = null;
+      state.email = null;
+      setAuthMode(resetTokenFromUrl ? 'reset' : 'login');
       setView('auth');
     }
 
@@ -132,7 +179,9 @@ const state = {
       try {
         if (typeof window.renderAppIcons === 'function') window.renderAppIcons();
         const me = await api('/api/auth/me');
+        state.userId = me.user_id;
         state.username = me.username;
+        state.email = me.email || null;
         return true;
       } catch (_e) {
         return false;
@@ -146,6 +195,170 @@ const state = {
         state.teams = [];
       }
       renderTeamAvatars();
+      renderTeamsPanel();
+    }
+
+    async function searchUsers(query) {
+      const rawValue = String(query || '').trim();
+      const normalized = rawValue.replace(/^@+/, '');
+      if (!rawValue.startsWith('@') && !normalized) {
+        state.userSuggestions = [];
+        renderUserSuggestions();
+        return;
+      }
+      try {
+        state.userSuggestions = await api(`/api/users/search?q=${encodeURIComponent(normalized)}`);
+      } catch (_e) {
+        state.userSuggestions = [];
+      }
+      renderUserSuggestions();
+    }
+
+    function renderUserSuggestions() {
+      if (!userMentionSuggestions) return;
+      userMentionSuggestions.innerHTML = '';
+      state.userSuggestions.forEach((user) => {
+        const option = document.createElement('option');
+        option.value = `@${user.username}`;
+        userMentionSuggestions.appendChild(option);
+      });
+    }
+
+    function renderTeamDetails() {
+      if (!teamDetailsCard || !teamDetailsName || !teamMembersList) return;
+      const team = getTeamById(state.selectedSidebarTeamId);
+      if (!team) {
+        teamDetailsCard.hidden = true;
+        teamMembersList.innerHTML = '';
+        return;
+      }
+
+      const canManage = canManageTeam(team.id);
+      teamDetailsCard.hidden = false;
+      teamDetailsName.textContent = team.name || 'Sin nombre';
+      if (editTeamForm) editTeamForm.hidden = true;
+      if (editTeamNameInput) editTeamNameInput.value = team.name || '';
+      if (editTeamBtn) editTeamBtn.hidden = !canManage;
+      if (deleteTeamBtn) deleteTeamBtn.hidden = !canManage;
+
+      const members = team.members || [];
+      if (!members.length) {
+        teamMembersList.innerHTML = '<p class="team-empty">Este equipo no tiene usuarios asociados todavía.</p>';
+        return;
+      }
+
+      teamMembersList.innerHTML = '';
+      members.forEach((member) => {
+        const row = document.createElement('div');
+        row.className = 'team-member-row';
+        const initials = member.username.substring(0, 2).toUpperCase();
+        row.innerHTML = `
+          <div class="team-member-identity">
+            <div class="team-member-badge">${escapeHtml(initials)}</div>
+            <div>
+              <div class="team-member-name">${escapeHtml(member.username)}</div>
+              <div class="team-member-meta">${canManage ? 'Usuario asociado al equipo' : 'Miembro del equipo'}</div>
+            </div>
+          </div>
+        `;
+
+        if (canManage) {
+          const removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.className = 'team-member-remove';
+          removeBtn.textContent = 'Quitar';
+          removeBtn.addEventListener('click', async () => {
+            if (!confirm(`¿Quitar a ${member.username} del equipo ${team.name}?`)) return;
+            try {
+              await api(`/api/teams/${team.id}/members/${member.user_id}`, { method: 'DELETE' });
+              if (state.filterAssignee === member.username) state.filterAssignee = 'Todos';
+              await loadTeams();
+              renderBoard();
+              renderCalendar();
+              renderHistory();
+              renderBoard();
+              renderCalendar();
+              renderHistory();
+            } catch (err) {
+              showToast(err.message || 'No se pudo quitar el usuario', true);
+            }
+          });
+          row.appendChild(removeBtn);
+        }
+
+        teamMembersList.appendChild(row);
+      });
+    }
+
+    function renderTeamsPanel() {
+      if (!teamsSummary) return;
+      if (!state.teams.length) {
+        teamsSummary.innerHTML = `
+          <div class="teams-empty-state">
+            <p class="team-empty">Todavia no perteneces a ningun equipo.</p>
+            <p class="team-empty-copy">Crea tu primer equipo para compartir tareas, presupuesto mensual e inversiones.</p>
+          </div>`;
+        return;
+      }
+      const created = state.teams.filter((team) => team.is_owner);
+      const member = state.teams.filter((team) => !team.is_owner);
+      const totalMembers = state.teams.reduce((sum, team) => sum + (Array.isArray(team.members) ? team.members.length : 0), 0);
+      const renderGroup = (title, teams) => `
+        <div class="team-panel-group">
+          <div class="section-heading section-heading-tight">
+            <div>
+              <h4>${title}</h4>
+              <p>${teams.length ? `${teams.length} equipo(s) en esta vista.` : 'Sin equipos en esta seccion.'}</p>
+            </div>
+          </div>
+          ${teams.length ? teams.map((team) => `
+            <article class="team-summary-card">
+              <div class="team-summary-top">
+                <div class="manage-item-info">
+                  <strong>${escapeHtml(team.name)}</strong>
+                  <span>${team.members.length} integrante(s)</span>
+                </div>
+                <span class="team-summary-badge">${team.is_owner ? 'Creador' : 'Miembro'}</span>
+              </div>
+              <div class="team-summary-meta">
+                <span>${team.is_owner ? 'Puedes administrar miembros y asignaciones.' : 'Equipo compartido contigo.'}</span>
+              </div>
+              <div class="manage-item-actions">
+                <button type="button" class="btn-sm btn-open-team" data-id="${team.id}">Ver</button>
+                ${team.is_owner ? `<button type="button" class="btn-sm btn-danger-sm btn-del-team-panel" data-id="${team.id}">Eliminar</button>` : ''}
+              </div>
+            </article>
+          `).join('') : '<p class="team-empty">Sin equipos en esta seccion.</p>'}
+        </div>`;
+      teamsSummary.innerHTML = `
+        <div class="teams-overview-grid">
+          <div class="metric-card">
+            <h4 class="metric-label">Total de equipos</h4>
+            <p class="metric-value metric-value-sm">${state.teams.length}</p>
+          </div>
+          <div class="metric-card">
+            <h4 class="metric-label">Equipos creados</h4>
+            <p class="metric-value metric-value-sm">${created.length}</p>
+          </div>
+          <div class="metric-card">
+            <h4 class="metric-label">Personas vinculadas</h4>
+            <p class="metric-value metric-value-sm">${totalMembers}</p>
+          </div>
+        </div>
+        ${renderGroup('Equipos que cree', created)}
+        ${renderGroup('Equipos a los que pertenezco', member)}
+      `;
+      teamsSummary.querySelectorAll('.btn-open-team').forEach((btn) => btn.addEventListener('click', () => {
+        state.selectedSidebarTeamId = btn.dataset.id;
+        setView('teams');
+        renderTeamAvatars();
+        renderTeamDetails();
+      }));
+      teamsSummary.querySelectorAll('.btn-del-team-panel').forEach((btn) => btn.addEventListener('click', async () => {
+        const team = getTeamById(btn.dataset.id);
+        if (!team) return;
+        await deleteTeamWithConfirmation(team);
+      }));
     }
 
     async function loadTasks() {
@@ -200,7 +413,11 @@ const state = {
         if (!raw) return;
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
-          state.categoryColors = parsed;
+          const normalized = {};
+          Object.entries(parsed).forEach(([key, value]) => {
+            normalized[key] = closestPaletteColor(value);
+          });
+          state.categoryColors = normalized;
         }
       } catch (_error) {
       }
@@ -212,6 +429,25 @@ const state = {
 
     function isHexColor(value) {
       return /^#[0-9a-fA-F]{6}$/.test(value || '');
+    }
+
+    function closestPaletteColor(value) {
+      const normalized = String(value || '').trim().toUpperCase();
+      if (FIXED_CATEGORY_COLORS.includes(normalized)) return normalized;
+      if (!isHexColor(normalized)) return '#808080';
+      const toRgb = (hex) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+      const [r, g, b] = toRgb(normalized);
+      let best = '#808080';
+      let bestDistance = Number.POSITIVE_INFINITY;
+      FIXED_CATEGORY_COLORS.forEach((candidate) => {
+        const [cr, cg, cb] = toRgb(candidate);
+        const distance = ((r - cr) ** 2) + ((g - cg) ** 2) + ((b - cb) ** 2);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = candidate;
+        }
+      });
+      return best;
     }
 
     function hslToHex(h, s, l) {
@@ -289,6 +525,30 @@ const state = {
       return state.teams.find((team) => String(team.id) === String(teamId)) || null;
     }
 
+    function canManageTeam(teamId) {
+      const team = getTeamById(teamId);
+      return Boolean(team && String(team.user_id) === String(state.userId));
+    }
+
+    function syncTeamManagementUi() {
+      const selectedTeamId = state.selectedSidebarTeamId || '';
+      const canManageSelectedTeam = canManageTeam(selectedTeamId);
+      const addTeamMemberForm = document.getElementById('addTeamMemberForm');
+
+      if (newTeamMemberUsernameInput) {
+        newTeamMemberUsernameInput.disabled = Boolean(selectedTeamId) && !canManageSelectedTeam;
+        newTeamMemberUsernameInput.placeholder = !selectedTeamId
+          ? '@usuario para equipo...'
+          : canManageSelectedTeam
+            ? '@usuario para equipo...'
+            : 'Solo puedes editar miembros en equipos creados por ti';
+      }
+
+      const addTeamMemberButton = document.querySelector('#addTeamMemberForm button[type="submit"], #addTeamMemberForm button');
+      if (addTeamMemberButton) addTeamMemberButton.disabled = Boolean(selectedTeamId) && !canManageSelectedTeam;
+      if (addTeamMemberForm) addTeamMemberForm.hidden = !selectedTeamId || !canManageSelectedTeam;
+    }
+
     function getMembersForTeam(teamId) {
       const team = getTeamById(teamId);
       return team?.members || [];
@@ -313,6 +573,10 @@ const state = {
 
     function getTaskAssigneeName(task) {
       return (task.assigned_username || task.assigned || '').trim();
+    }
+
+    function canManageTask(task) {
+      return Boolean(task && String(task.user_id) === String(state.userId));
     }
 
     function syncTaskAssigneeOptions(selectedUserId = '') {
@@ -364,6 +628,8 @@ const state = {
         }
       }
 
+      syncTeamManagementUi();
+
       if (!teamAvatars) return;
       teamAvatars.innerHTML = '';
       const allAvatar = document.createElement('div');
@@ -412,8 +678,41 @@ const state = {
         });
         teamAvatars.appendChild(avatar);
       });
-
       syncTaskAssigneeOptions(assignedInput?.value || '');
+      renderTeamDetails();
+    }
+
+    async function deleteTeamWithConfirmation(team) {
+      if (!team) return;
+      if (!confirm(`¿Eliminar el equipo ${team.name}?`)) return;
+      try {
+        await api(`/api/teams/${team.id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force_cleanup: false }) });
+        state.selectedSidebarTeamId = '';
+        await loadTeams();
+        await loadTasks();
+        renderTeamsPanel();
+        showToast('Equipo eliminado');
+      } catch (err) {
+        const requiresCleanup = /asignaciones activas/i.test(err.message || '');
+        if (!requiresCleanup) {
+          showToast(err.message || 'No se pudo eliminar el equipo', true);
+          return;
+        }
+        if (!confirm('El equipo tiene tareas no finalizadas, cuentas o inversiones asignadas. Si continuas, se desasignaran todas esas referencias.')) return;
+        if (!confirm('Confirmacion final: se eliminara el equipo y se desasignaran todas las referencias activas.')) return;
+        await api(`/api/teams/${team.id}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force_cleanup: true })
+        });
+        state.selectedSidebarTeamId = '';
+        await loadTeams();
+        await loadTasks();
+        if (window._budgetDashboard) await window._budgetDashboard.refresh();
+        if (typeof loadInversionesData === 'function') await loadInversionesData();
+        renderTeamsPanel();
+        showToast('Equipo eliminado y referencias desasignadas');
+      }
     }
 
     function renderCategorySuggestions() {
@@ -446,23 +745,26 @@ const state = {
         name.className = 'category-color-name';
         name.textContent = category;
 
-        const input = document.createElement('input');
-        input.type = 'color';
-        input.className = 'category-color-input';
-        input.value = getCategoryHex(category);
-        input.title = `Color de ${category}`;
-        input.addEventListener('input', () => {
-          const normalized = normalizeCategory(category);
-          state.categoryColors[normalized] = input.value;
-          saveCategoryColors();
-          if (normalizeCategory(categoryInput.value) === normalized) {
-            categoryColorInput.value = input.value;
-          }
-          renderBoard();
-        });
-
         row.appendChild(name);
-        row.appendChild(input);
+        const swatches = document.createElement('div');
+        swatches.className = 'color-swatch-group';
+        FIXED_CATEGORY_COLORS.forEach((color) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'color-swatch-btn' + (getCategoryHex(category) === color ? ' active' : '');
+          btn.style.background = color;
+          btn.title = `Color ${color}`;
+          btn.addEventListener('click', () => {
+            const normalized = normalizeCategory(category);
+            state.categoryColors[normalized] = color;
+            saveCategoryColors();
+            renderCategoryColorList();
+            renderBoard();
+            renderCalendar();
+          });
+          swatches.appendChild(btn);
+        });
+        row.appendChild(swatches);
         categoryColorList.appendChild(row);
       });
     }
@@ -478,14 +780,12 @@ const state = {
 
     function getCategoryHex(category) {
       const normalized = normalizeCategory(category);
-      if (!normalized) return '#fff28b';
+      if (!normalized) return '#FFFF00';
       if (isHexColor(state.categoryColors[normalized])) {
-        return state.categoryColors[normalized];
+        return closestPaletteColor(state.categoryColors[normalized]);
       }
-
-      const baseHash = hashCategory(normalized);
-      const hue = baseHash % 360;
-      return hslToHex(hue, 70, 86);
+      const paletteIndex = hashCategory(normalized) % FIXED_CATEGORY_COLORS.length;
+      return FIXED_CATEGORY_COLORS[paletteIndex];
     }
 
     function getCategoryColor(category) {
@@ -524,6 +824,64 @@ const state = {
     }
 
     const appSidebar = document.getElementById('appSidebar');
+    const resetTokenFromUrl = new URLSearchParams(window.location.search).get('reset_token') || '';
+
+    function setAuthMode(mode) {
+      authMode = mode;
+      const isLogin = mode === 'login';
+      const isRegister = mode === 'register';
+      const isForgot = mode === 'forgot';
+      const isLegacy = mode === 'legacy';
+      const isLegacyEmail = mode === 'legacy-email';
+      const isReset = mode === 'reset';
+      if (authForm) authForm.hidden = !(isLogin || isRegister);
+      if (authLegacyForm) authLegacyForm.hidden = !isLegacy;
+      if (authLegacyEmailForm) authLegacyEmailForm.hidden = !isLegacyEmail;
+      if (authForgotForm) authForgotForm.hidden = !isForgot;
+      if (authResetForm) authResetForm.hidden = !isReset;
+      if (authUsernameInput) authUsernameInput.hidden = !isRegister;
+      if (authEmailInput) authEmailInput.required = isLogin || isRegister;
+      isRegisterMode = isRegister;
+      if (authTitle) {
+        authTitle.textContent = isRegister
+          ? 'Registrar usuario'
+          : isForgot
+            ? 'Recuperar contrasena'
+            : isLegacy
+              ? 'Ingreso de usuarios existentes'
+              : isLegacyEmail
+                ? 'Vincular correo electronico'
+                : isReset
+                  ? 'Crear nueva contrasena'
+                  : 'Iniciar sesion';
+      }
+      if (authCopy) {
+        authCopy.textContent = isRegister
+          ? 'Crea tu cuenta con nombre visible, correo electronico y contrasena.'
+          : isForgot
+            ? 'Ingresa tu correo y te enviaremos instrucciones si existe una cuenta asociada.'
+            : isLegacy
+              ? 'Si ya tenias usuario en la app, entra con tus datos actuales para vincular tu correo.'
+              : isLegacyEmail
+                ? 'Define un correo unico para terminar la migracion de tu acceso.'
+                : isReset
+                  ? 'Ingresa tu nueva contrasena para volver a acceder.'
+                  : 'Usa tu correo electronico y tu contrasena para entrar.';
+      }
+      if (authSubmitBtn) authSubmitBtn.textContent = isRegister ? 'Registrarse' : 'Ingresar';
+      if (authModeSwitch) authModeSwitch.hidden = !(isLogin || isRegister);
+      if (authAuxActions) authAuxActions.hidden = !isLogin;
+      if (authForgotBtn) authForgotBtn.hidden = !isLogin;
+      if (authLegacyBtn) authLegacyBtn.hidden = !isLogin;
+      if (authToggleModeBtn) authToggleModeBtn.hidden = isLogin || isRegister;
+      if (authLoginModeBtn) authLoginModeBtn.classList.toggle('active', isLogin);
+      if (authRegisterModeBtn) authRegisterModeBtn.classList.toggle('active', isRegister);
+      if (authError) authError.textContent = '';
+      if (authForgotError) authForgotError.textContent = '';
+      if (authLegacyError) authLegacyError.textContent = '';
+      if (authLegacyEmailError) authLegacyEmailError.textContent = '';
+      if (authResetError) authResetError.textContent = '';
+    }
 
     function setView(view) {
       state.currentView = view;
@@ -534,10 +892,13 @@ const state = {
       const isExpenses = view === 'expenses';
       const isInversiones = view === 'inversiones';
       const isPresupuesto = view === 'presupuesto';
+      const isTeams = view === 'teams';
       const isTareasTab = isMatrix || isHistory;
-      
+      const usesTaskSidebar = isMatrix || isCalendar || isHistory;
+      const topNavbar = document.querySelector('.top-navbar');
       const mainAppMenu = document.querySelector('.view-switch');
       if (authPanel) authPanel.hidden = !isAuth;
+      if (topNavbar) topNavbar.hidden = isAuth;
       if (mainAppMenu) mainAppMenu.hidden = isAuth;
       if (logoutBtn) logoutBtn.hidden = isAuth;
       
@@ -549,6 +910,7 @@ const state = {
       if (inversionesPanel) inversionesPanel.hidden = !isInversiones;
       const presupuestoPanel = document.getElementById('presupuestoPanel');
       if (presupuestoPanel) presupuestoPanel.hidden = !isPresupuesto;
+      if (teamsPanel) teamsPanel.hidden = !isTeams;
       
       matrixViewBtn.classList.toggle('active', isTareasTab);
       calendarViewBtn.classList.toggle('active', isCalendar);
@@ -558,8 +920,9 @@ const state = {
       if (invViewBtn) invViewBtn.classList.toggle('active', isInversiones);
       const presupuestoViewBtn = document.getElementById('presupuestoViewBtn');
       if (presupuestoViewBtn) presupuestoViewBtn.classList.toggle('active', isPresupuesto);
+      if (teamsViewBtn) teamsViewBtn.classList.toggle('active', isTeams);
 
-      if (appSidebar) appSidebar.hidden = isAuth ? true : !isTareasTab;
+      if (appSidebar) appSidebar.hidden = isAuth ? true : !usesTaskSidebar;
       if (taskForm) taskForm.hidden = isAuth ? true : !isTareasTab;
       if (fabAddBtn) fabAddBtn.hidden = isAuth ? true : !isMatrix;
 
@@ -571,6 +934,9 @@ const state = {
       }
       if (isPresupuesto && window._budgetDashboard) {
         window._budgetDashboard.refresh();
+      }
+      if (isTeams) {
+        renderTeamsPanel();
       }
     }
 
@@ -625,13 +991,17 @@ const state = {
         const item = document.createElement('button');
         item.type = 'button';
         item.className = 'calendar-task';
-        item.draggable = true;
+        item.draggable = canManageTask(task);
         item.title = task.title || '(Sin titulo)';
         const colors = getCategoryColor(task.category || '');
         item.style.setProperty('--task-sticky', colors.sticky);
         item.style.setProperty('--task-sticky-line', colors.line);
         item.textContent = task.title || '(Sin titulo)';
         item.addEventListener('dragstart', (event) => {
+          if (!canManageTask(task)) {
+            event.preventDefault();
+            return;
+          }
           setDragTask(event, task.id);
         });
         item.addEventListener('click', () => {
@@ -709,7 +1079,8 @@ const state = {
     function createTaskCard(task) {
       const card = document.createElement('article');
       card.className = 'task';
-      card.draggable = true;
+      const isManageableTask = canManageTask(task);
+      card.draggable = isManageableTask;
       card.dataset.id = String(task.id);
 
       const title = task.title || '(Sin titulo)';
@@ -730,20 +1101,32 @@ const state = {
             <button class="complete-btn" title="Marcar como completada" type="button">
               ${task.completed ? '<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>' : ''}
             </button>
-            <h4 class="task-title ${task.completed ? 'completed' : ''}">${escapeHtml(title)}</h4>
+            <div class="task-heading">
+              <h4 class="task-title ${task.completed ? 'completed' : ''}">${escapeHtml(title)}</h4>
+              <div class="task-tags">
+                <span class="task-tag">${escapeHtml(category)}</span>
+                <span class="task-tag task-tag-muted">${escapeHtml(teamName)}</span>
+              </div>
+            </div>
           </div>
           <div class="task-actions">
-            <button class="task-action-btn edit-btn" type="button" aria-label="Editar tarea">Editar</button>
-            <button class="task-action-btn delete-btn" type="button" aria-label="Eliminar tarea">x</button>
+            ${isManageableTask ? '<button class="task-action-btn edit-btn" type="button" aria-label="Editar tarea">Editar</button><button class="task-action-btn delete-btn" type="button" aria-label="Eliminar tarea">x</button>' : ''}
           </div>
         </div>
         <div class="task-meta">
-          <p style="margin:0;">Categoria: ${escapeHtml(category)} | Equipo: ${escapeHtml(teamName)} | Asignado: ${escapeHtml(assigned)} | Fecha: ${escapeHtml(fecha)}${escapeHtml(inProgressLabel)}</p>
+          <div class="task-meta-line">
+            <span class="task-meta-item">Asignado: <strong>${escapeHtml(assigned)}</strong></span>
+            <span class="task-meta-item">Fecha: <strong>${escapeHtml(fecha)}</strong></span>
+          </div>
+          ${hadInProgress ? `<div class="task-meta-line"><span class="task-meta-item">Tiempo en proceso: <strong>${escapeHtml(formatInProgressDuration(trackedSeconds))}</strong></span></div>` : ''}
         </div>
       `;
 
       const completeBtn = card.querySelector('.complete-btn');
-      if (completeBtn && !task.completed) {
+      if (completeBtn && !isManageableTask) {
+        completeBtn.disabled = true;
+        completeBtn.title = 'Solo el creador puede modificar esta tarea';
+      } else if (completeBtn && !task.completed) {
         completeBtn.addEventListener('click', async () => {
           completeBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>';
           card.classList.add('completed-animation');
@@ -767,37 +1150,47 @@ const state = {
         });
       }
 
-      card.querySelector('.edit-btn').addEventListener('click', () => {
-        state.editingTaskId = task.id;
-        titleInput.value = task.title || '';
-        descriptionInput.value = task.description || '';
-        teamIdInput.value = task.team_id ? String(task.team_id) : '';
-        syncTaskAssigneeOptions(task.assigned_user_id ? String(task.assigned_user_id) : '');
-        fechaInput.value = normalizeFechaInput(task.fecha);
-        categoryInput.value = task.category || '';
-        if (categoryColorInput) categoryColorInput.value = getCategoryHex(task.category || '');
-        if (document.getElementById('formQuadrant')) document.getElementById('formQuadrant').disabled = true;
-        submitBtn.textContent = 'Modificar tarea';
-        cancelEditBtn.hidden = false;
-        titleInput.focus();
-        if (taskModal) taskModal.showModal();
-        else taskForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
+      const editBtn = card.querySelector('.edit-btn');
+      if (editBtn) {
+        editBtn.addEventListener('click', () => {
+          state.editingTaskId = task.id;
+          titleInput.value = task.title || '';
+          descriptionInput.value = task.description || '';
+          teamIdInput.value = task.team_id ? String(task.team_id) : '';
+          syncTaskAssigneeOptions(task.assigned_user_id ? String(task.assigned_user_id) : '');
+          fechaInput.value = normalizeFechaInput(task.fecha);
+          categoryInput.value = task.category || '';
+          if (categoryColorInput) categoryColorInput.value = getCategoryHex(task.category || '');
+          if (document.getElementById('formQuadrant')) document.getElementById('formQuadrant').disabled = true;
+          submitBtn.textContent = 'Modificar tarea';
+          cancelEditBtn.hidden = false;
+          titleInput.focus();
+          if (taskModal) taskModal.showModal();
+          else taskForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
 
-      card.querySelector('.delete-btn').addEventListener('click', async () => {
-        try {
-          await api(`/api/tasks/${task.id}`, { method: 'DELETE' });
-          if (state.editingTaskId === task.id) {
-            resetEditMode();
+      const deleteBtn = card.querySelector('.delete-btn');
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', async () => {
+          try {
+            await api(`/api/tasks/${task.id}`, { method: 'DELETE' });
+            if (state.editingTaskId === task.id) {
+              resetEditMode();
+            }
+            await loadTasks();
+          } catch (e) {
+            console.error('[deleteTask]', e);
+            showToast('No se pudo eliminar la tarea', true);
           }
-          await loadTasks();
-        } catch (e) {
-          console.error('[deleteTask]', e);
-          showToast('No se pudo eliminar la tarea', true);
-        }
-      });
+        });
+      }
 
       card.addEventListener('dragstart', (event) => {
+        if (!isManageableTask) {
+          event.preventDefault();
+          return;
+        }
         card.classList.add('dragging');
         setDragTask(event, task.id);
       });
@@ -872,7 +1265,7 @@ const state = {
         quadrantEl.innerHTML = `<h3>${QUADRANTS[key]}</h3>`;
       });
       if (inProgressZone) {
-        inProgressZone.innerHTML = `<h3>${QUADRANTS[IN_PROGRESS]}</h3><p class="drop-hint">Arrastra aqui las tareas que estas trabajando</p>`;
+        inProgressZone.innerHTML = `<h3>${QUADRANTS[IN_PROGRESS]}</h3><p class="drop-hint">Arrastra aqui las tareas que estas trabajando ahora.</p>`;
       }
       backlogList.innerHTML = '';
       let inProgressCount = 0;
@@ -1070,38 +1463,126 @@ const state = {
       authForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const username = authUsernameInput.value.trim();
+        const email = authEmailInput.value.trim().toLowerCase();
         const password = authPasswordInput.value.trim();
         authError.textContent = '';
-        if (!username || !password) return;
+        if ((authMode === 'register' && !username) || !email || !password) return;
 
         try {
           const endpoint = isRegisterMode ? '/api/auth/register' : '/api/auth/login';
           const res = await api(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify(isRegisterMode ? { username, email, password } : { email, password })
           });
           state.token = res.token || null;
+          state.userId = res.user_id || null;
           state.username = res.username;
+          state.email = res.email || null;
           authForm.reset();
+          setAuthMode('login');
           setView('matrix');
           await loadTeams();
           await loadTasks();
+          renderTeamsPanel();
         } catch (err) {
           authError.textContent = err.message;
         }
       });
     }
 
-    if (authToggleModeBtn) {
-      authToggleModeBtn.addEventListener('click', () => {
-        isRegisterMode = !isRegisterMode;
-        authTitle.textContent = isRegisterMode ? 'Registrar Usuario' : 'Iniciar Sesión';
-        authSubmitBtn.textContent = isRegisterMode ? 'Registrarse' : 'Ingresar';
-        authToggleModeBtn.textContent = isRegisterMode ? 'Ya tengo cuenta (Ingresar)' : 'No tengo cuenta (Registrarme)';
-        authError.textContent = '';
-      });
-    }
+    authLoginModeBtn?.addEventListener('click', () => setAuthMode('login'));
+    authRegisterModeBtn?.addEventListener('click', () => setAuthMode('register'));
+    authToggleModeBtn?.addEventListener('click', () => setAuthMode('login'));
+
+    authForgotBtn?.addEventListener('click', () => setAuthMode('forgot'));
+    authLegacyBtn?.addEventListener('click', () => setAuthMode('legacy'));
+
+    authLegacyForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      authLegacyError.textContent = '';
+      try {
+        const res = await api('/api/auth/login-legacy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: authLegacyUsername.value.trim(),
+            password: authLegacyPassword.value.trim()
+          })
+        });
+        legacyCompletionToken = res.legacy_token || '';
+        setAuthMode('legacy-email');
+      } catch (err) {
+        authLegacyError.textContent = err.message;
+      }
+    });
+
+    authLegacyEmailForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      authLegacyEmailError.textContent = '';
+      try {
+        const res = await api('/api/auth/complete-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            legacy_token: legacyCompletionToken,
+            email: authLegacyEmail.value.trim().toLowerCase()
+          })
+        });
+        state.token = res.token || null;
+        state.userId = res.user_id || null;
+        state.username = res.username;
+        state.email = res.email || null;
+        setAuthMode('login');
+        setView('matrix');
+        await loadTeams();
+        await loadTasks();
+      } catch (err) {
+        authLegacyEmailError.textContent = err.message;
+      }
+    });
+
+    authForgotForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      authForgotError.textContent = '';
+      try {
+        const res = await api('/api/auth/forgot-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authForgotEmail.value.trim().toLowerCase() })
+        });
+        authForgotError.textContent = res.message || 'Si existe una cuenta asociada, enviamos instrucciones.';
+      } catch (err) {
+        authForgotError.textContent = err.message;
+      }
+    });
+
+    authResetForm?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      authResetError.textContent = '';
+      if (authResetPassword.value !== authResetPasswordConfirm.value) {
+        authResetError.textContent = 'Las contrasenas no coinciden';
+        return;
+      }
+      try {
+        const res = await api('/api/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reset_token: resetTokenFromUrl, password: authResetPassword.value.trim() })
+        });
+        state.token = res.token || null;
+        state.userId = res.user_id || null;
+        state.username = res.username;
+        state.email = res.email || null;
+        window.history.replaceState({}, '', window.location.pathname);
+        setAuthMode('login');
+        setView('matrix');
+        await loadTeams();
+        await loadTasks();
+      } catch (err) {
+        authResetError.textContent = err.message;
+      }
+    });
 
     if (logoutBtn) {
       logoutBtn.addEventListener('click', async () => {
@@ -1150,6 +1631,45 @@ const state = {
       });
     }
 
+    if (editTeamBtn) {
+      editTeamBtn.addEventListener('click', () => {
+        const team = getTeamById(state.selectedSidebarTeamId);
+        if (!team || !editTeamForm || !editTeamNameInput) return;
+        editTeamNameInput.value = team.name || '';
+        editTeamForm.hidden = !editTeamForm.hidden;
+        if (!editTeamForm.hidden) editTeamNameInput.focus();
+      });
+    }
+
+    if (editTeamForm) {
+      editTeamForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const teamId = state.selectedSidebarTeamId;
+        const nextName = editTeamNameInput?.value.trim();
+        if (!teamId || !nextName) return;
+        try {
+          await api(`/api/teams/${teamId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: nextName })
+          });
+          editTeamForm.hidden = true;
+          await loadTeams();
+          showToast('Equipo actualizado');
+        } catch (err) {
+          showToast(err.message || 'No se pudo actualizar el equipo', true);
+        }
+      });
+    }
+
+    if (deleteTeamBtn) {
+      deleteTeamBtn.addEventListener('click', async () => {
+        const team = getTeamById(state.selectedSidebarTeamId);
+        if (!team) return;
+        await deleteTeamWithConfirmation(team);
+      });
+    }
+
     if (teamIdInput) {
       teamIdInput.addEventListener('change', () => {
         syncTaskAssigneeOptions('');
@@ -1171,12 +1691,22 @@ const state = {
       });
     }
 
+    if (teamsViewBtn) {
+      teamsViewBtn.addEventListener('click', () => setView('teams'));
+    }
+    if (teamsCreateBtn) {
+      teamsCreateBtn.addEventListener('click', () => {
+        setView('teams');
+        document.getElementById('newTeamName')?.focus();
+      });
+    }
+
     const addTeamMemberForm = document.getElementById('addTeamMemberForm');
     if (addTeamMemberForm) {
       addTeamMemberForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const usernameInput = document.getElementById('newTeamMemberUsername');
-        const username = usernameInput?.value.trim();
+        const username = usernameInput?.value.trim().replace(/^@+/, '');
         const selectedTeamId = state.selectedSidebarTeamId || '';
         if (!selectedTeamId) {
           showToast('Selecciona un equipo para agregar miembros', true);
@@ -1190,10 +1720,61 @@ const state = {
             body: JSON.stringify({ username })
           });
           usernameInput.value = '';
+          state.userSuggestions = [];
+          renderUserSuggestions();
           await loadTeams();
         } catch (err) {
           showToast(err.message, true);
         }
+      });
+    }
+
+    if (newTeamMemberUsernameInput) {
+      let searchUsersTimer = null;
+      newTeamMemberUsernameInput.addEventListener('input', () => {
+        const value = newTeamMemberUsernameInput.value.trim();
+        if (!value.startsWith('@')) {
+          state.userSuggestions = [];
+          renderUserSuggestions();
+          return;
+        }
+        if (searchUsersTimer) clearTimeout(searchUsersTimer);
+        searchUsersTimer = setTimeout(() => {
+          searchUsers(value);
+        }, 120);
+      });
+
+      newTeamMemberUsernameInput.addEventListener('blur', () => {
+        const rawValue = newTeamMemberUsernameInput.value.trim();
+        const normalizedValue = rawValue.replace(/^@+/, '');
+        const exactMatch = state.userSuggestions.find((user) => user.username.toLowerCase() === normalizedValue.toLowerCase());
+        if (!rawValue.startsWith('@')) return;
+        if (exactMatch) {
+          newTeamMemberUsernameInput.value = `@${exactMatch.username}`;
+          return;
+        }
+        if (state.userSuggestions.length === 1) {
+          newTeamMemberUsernameInput.value = `@${state.userSuggestions[0].username}`;
+        }
+      });
+    }
+
+    function renderNewCategoryPalette() {
+      if (!newCategoryPalette) return;
+      const hiddenInput = document.getElementById('newCategoryColor');
+      const current = closestPaletteColor(hiddenInput?.value || '#FF0000');
+      if (hiddenInput) hiddenInput.value = current;
+      newCategoryPalette.innerHTML = '';
+      FIXED_CATEGORY_COLORS.forEach((color) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'color-swatch-btn' + (current === color ? ' active' : '');
+        btn.style.background = color;
+        btn.addEventListener('click', () => {
+          if (hiddenInput) hiddenInput.value = color;
+          renderNewCategoryPalette();
+        });
+        newCategoryPalette.appendChild(btn);
       });
     }
     
@@ -1202,11 +1783,13 @@ const state = {
       addCategoryForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const name = document.getElementById('newCategoryName').value.trim();
-        const color = document.getElementById('newCategoryColor').value;
+        const color = closestPaletteColor(document.getElementById('newCategoryColor').value);
         if (name && isHexColor(color)) {
           state.categoryColors[normalizeCategory(name)] = color;
           saveCategoryColors();
           document.getElementById('newCategoryName').value = '';
+          document.getElementById('newCategoryColor').value = '#FF0000';
+          renderNewCategoryPalette();
           renderCategoryColorList();
           renderBoard();
         }
@@ -1414,20 +1997,28 @@ const state = {
     function populateInvSelects() {
       const invTxActivo = document.getElementById('invTxActivo');
       const invSectorSuggestions = document.getElementById('invSectorSuggestions');
+      const invActTeam = document.getElementById('invActTeam');
+      const invTxTeam = document.getElementById('invTxTeam');
       if (invTxActivo) {
         invTxActivo.innerHTML = '<option value="">Seleccione Activo...</option>';
         invState.activos.forEach(a => {
           const opt = document.createElement('option');
           opt.value = a.id_activo;
           opt.dataset.clase = a.clase || '';
+          opt.dataset.teamId = a.team_id || '';
           opt.textContent = `${a.ticker} - ${a.nombre || a.clase}`;
           invTxActivo.appendChild(opt);
         });
       }
+      const teamOptions = ['<option value="">Sin equipo</option>']
+        .concat(state.teams.map((team) => `<option value="${team.id}">${escapeHtml(team.name)}</option>`));
+      if (invActTeam) invActTeam.innerHTML = teamOptions.join('');
+      if (invTxTeam) invTxTeam.innerHTML = teamOptions.join('');
       if (invTxActivo) {
         invTxActivo.addEventListener('change', (e) => {
           const opt = e.target.options[e.target.selectedIndex];
           const clase = opt?.dataset?.clase || '';
+          if (invTxTeam) invTxTeam.value = opt?.dataset?.teamId || '';
           const tnaInput = document.getElementById('invTxTna');
           if (tnaInput) {
             if (clase === 'Plazo Fijo' || clase === 'Caución' || clase === 'CauciÃ³n') {
@@ -1622,7 +2213,11 @@ const state = {
         tickerInput.addEventListener('input', (e) => {
           const val = e.target.value.trim().toUpperCase();
           if (!val) {
-            if (badge) badge.style.display = 'none';
+            if (badge) {
+              badge.hidden = true;
+              badge.className = 'badge badge-hidden';
+              badge.innerHTML = '';
+            }
             if (providerInput) {
               providerInput.value = 'manual';
               providerInput.disabled = false;
@@ -1635,14 +2230,8 @@ const state = {
           }
           
           if (badge) {
-            badge.style.display = 'flex';
-            badge.className = 'badge';
-            badge.style.background = '#f3f4f6';
-            badge.style.color = '#4b5563';
-            badge.style.border = '1px solid var(--line)';
-            badge.style.borderLeft = 'none';
-            badge.style.borderTopLeftRadius = '0';
-            badge.style.borderBottomLeftRadius = '0';
+            badge.hidden = false;
+            badge.className = 'badge badge-pending';
             badge.innerHTML = `${icon('hourglass', '&#x23F3;')} ...`;
           }
           
@@ -1653,9 +2242,6 @@ const state = {
               if (res.valid) {
                 if (badge) {
                   badge.className = 'badge badge-auto';
-                  badge.style.background = '';
-                  badge.style.color = '';
-                  badge.style.border = '';
                   badge.innerHTML = `${icon('greenCircle', '&#x1F7E2;')} Auto`;
                 }
                 if (providerInput) {
@@ -1670,9 +2256,6 @@ const state = {
             } catch (err) {
               if (badge) {
                 badge.className = 'badge badge-manual';
-                badge.style.background = '';
-                badge.style.color = '';
-                badge.style.border = '';
                 badge.innerHTML = `${icon('redCircle', '&#x1F534;')} Manual`;
               }
               if (providerInput) {
@@ -1693,6 +2276,7 @@ const state = {
         const ticker = document.getElementById('invActTicker').value;
         const nombre = document.getElementById('invActNombre').value;
         const sectorNombre = document.getElementById('invActSector').value;
+        const team_id = document.getElementById('invActTeam')?.value || '';
         const clase = document.getElementById('invActClase').value;
         const provider = document.getElementById('invActProvider').value;
         const providerId = document.getElementById('invActProviderId').value;
@@ -1714,7 +2298,7 @@ const state = {
           await api('/api/inv/activos', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ticker, nombre, id_sector: sectorId, clase, api_provider: provider, api_id: providerId })
+            body: JSON.stringify({ ticker, nombre, id_sector: sectorId, team_id, clase, api_provider: provider, api_id: providerId })
           });
 
           showToast('Activo creado');
@@ -1722,7 +2306,11 @@ const state = {
           invTransaccionForm.hidden = false;
           invActivoForm.reset();
           const badge = document.getElementById('invActTickerBadge');
-          if (badge) badge.style.display = 'none';
+          if (badge) {
+            badge.hidden = true;
+            badge.className = 'badge badge-hidden';
+            badge.innerHTML = '';
+          }
           const providerInput = document.getElementById('invActProvider');
           if (providerInput) providerInput.disabled = false;
           await loadInversionesData(); 
@@ -1741,6 +2329,7 @@ const state = {
         const precio_operacion = Number(document.getElementById('invTxPrecio').value);
         const moneda = document.getElementById('invTxMoneda').value;
         const fecha_operacion = document.getElementById('invTxFecha').value;
+        const team_id = document.getElementById('invTxTeam')?.value || '';
         const resta_liquidez_val = document.getElementById('invTxRestaLiquidez')?.value === 'si';
         const tnaInput = document.getElementById('invTxTna');
         const tna = (tnaInput && !tnaInput.hidden && tnaInput.value) ? Number(tnaInput.value) : null;
@@ -1751,7 +2340,7 @@ const state = {
           await api('/api/inv/transacciones', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id_activo, tipo_movimiento, cantidad, precio_operacion, moneda, fecha_operacion, resta_liquidez: resta_liquidez_val, tna })
+            body: JSON.stringify({ id_activo, tipo_movimiento, cantidad, precio_operacion, moneda, fecha_operacion, team_id, resta_liquidez: resta_liquidez_val, tna })
           });
           showToast('Transacción registrada');
           invTransaccionForm.reset();
@@ -1802,7 +2391,9 @@ const state = {
     (async function init() {
       try {
         loadCategoryColors();
+        renderNewCategoryPalette();
         setupWeekdays();
+        setAuthMode(resetTokenFromUrl ? 'reset' : 'login');
         const hasSession = await checkSession();
         if (hasSession) {
           setView('matrix');
@@ -1815,11 +2406,15 @@ const state = {
           }
         } else {
           setView('auth');
+          if (!resetTokenFromUrl) setAuthMode('login');
         }
         await initNotifications();
       } catch (error) {
         console.error(error);
         showToast('No se pudo inicializar la app', true);
+      } finally {
+        document.body.classList.remove('app-loading');
+        if (appBootSplash) appBootSplash.hidden = true;
       }
     })();
 

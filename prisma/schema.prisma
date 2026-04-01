@@ -10,8 +10,10 @@ datasource db {
 model User {
   id           Int      @id @default(autoincrement())
   username     String   @unique @db.VarChar(80)
+  email        String?  @unique
   passwordHash String   @map("password_hash")
   salt         String
+  passwordVersion Int   @default(0) @map("password_version")
   createdAt    DateTime @default(now()) @map("created_at")
 
   tasks       Task[]           @relation("taskOwner")
@@ -21,6 +23,7 @@ model User {
   teams       Team[]
   teamLinks   TeamMembership[]
   cuentas     Cuenta[]
+  resetTokens PasswordResetToken[]
 
   @@map("users")
 }
@@ -84,6 +87,8 @@ model Team {
   owner       User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   memberships TeamMembership[]
   tasks       Task[]
+  cuentas     CuentaEquipo[]
+  activos     InvActivo[]
 
   @@unique([name, userId])
   @@map("teams")
@@ -121,7 +126,9 @@ model InvActivo {
   precioMercado     Float?           @default(0) @map("precio_mercado")
   fechaUltimoPrecio DateTime?        @map("fecha_ultimo_precio")
   userId            Int?             @map("user_id")
+  teamId            Int?             @map("team_id")
   sector            InvSector?       @relation(fields: [idSector], references: [idSector], onDelete: NoAction, onUpdate: NoAction)
+  team              Team?            @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   transacciones     InvTransaccion[]
 
   @@map("inv_activos")
@@ -138,6 +145,7 @@ model InvTransaccion {
   restaLiquidez  Int       @default(0) @map("resta_liquidez")
   tna            Float?
   userId         Int?      @map("user_id")
+  teamId         Int?      @map("team_id")
 
   activo InvActivo @relation(fields: [idActivo], references: [idActivo], onDelete: NoAction, onUpdate: NoAction)
 
@@ -163,6 +171,7 @@ model Cuenta {
   gastos          Gasto[]
   presupuestos    PresupuestoMensual[]
   cuentaUsuarios  CuentaUsuario[]
+  cuentaEquipos   CuentaEquipo[]
 
   @@map("cuentas")
 }
@@ -176,6 +185,31 @@ model CuentaUsuario {
 
   @@id([cuentaId, userId])
   @@map("cuenta_usuarios")
+}
+
+model CuentaEquipo {
+  cuentaId   String   @map("cuenta_id")
+  teamId     Int      @map("team_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  cuenta Cuenta @relation(fields: [cuentaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([cuentaId, teamId])
+  @@map("cuenta_equipos")
+}
+
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("password_reset_tokens")
 }
 
 model Categoria {

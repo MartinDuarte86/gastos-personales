@@ -42,9 +42,23 @@ module.exports = function(db, callback) {
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
+        email TEXT,
         password_hash TEXT NOT NULL,
         salt TEXT NOT NULL,
+        password_version INTEGER NOT NULL DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at DATETIME NOT NULL,
+        used_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
       );
     `);
 
@@ -79,6 +93,17 @@ module.exports = function(db, callback) {
       );
     `);
 
+    db.run(`
+      CREATE TABLE IF NOT EXISTS cuenta_equipos (
+        cuenta_id TEXT NOT NULL,
+        team_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(cuenta_id, team_id),
+        FOREIGN KEY(cuenta_id) REFERENCES cuentas(id) ON DELETE CASCADE,
+        FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
+      );
+    `);
+
     // Retro-compatibility: add user_id column if tasks or expenses were created before auth
     db.all('PRAGMA table_info(tasks)', [], (err, columns) => {
       if (!err) {
@@ -108,6 +133,45 @@ module.exports = function(db, callback) {
         db.run('ALTER TABLE expenses ADD COLUMN user_id INTEGER');
       }
     });
+
+    db.all('PRAGMA table_info(users)', [], (err, columns) => {
+      if (!err) {
+        if (!columns.some(c => c.name === 'email')) {
+          db.run('ALTER TABLE users ADD COLUMN email TEXT');
+        }
+        if (!columns.some(c => c.name === 'password_version')) {
+          db.run('ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0');
+        }
+      }
+    });
+
+    db.all('PRAGMA table_info(inv_activos)', [], (err, columns) => {
+      if (!err && columns.length) {
+        if (!columns.some(c => c.name === 'team_id')) {
+          db.run('ALTER TABLE inv_activos ADD COLUMN team_id INTEGER');
+        }
+      }
+    });
+
+    db.all('PRAGMA table_info(inv_transacciones)', [], (err, columns) => {
+      if (!err && columns.length) {
+        if (!columns.some(c => c.name === 'team_id')) {
+          db.run('ALTER TABLE inv_transacciones ADD COLUMN team_id INTEGER');
+        }
+      }
+    });
+
+    db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(LOWER(email)) WHERE email IS NOT NULL');
+    db.run('CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_cuenta_equipos_team ON cuenta_equipos(team_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_inv_activos_team ON inv_activos(team_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_inv_transacciones_team ON inv_transacciones(team_id)');
+    db.run(`
+      INSERT OR IGNORE INTO team_memberships (team_id, member_user_id)
+      SELECT id, user_id
+      FROM teams
+      WHERE user_id IS NOT NULL
+    `);
 
     db.all(`SELECT name FROM _migrations`, [], (err, rows) => {
       if (err) return console.error(err);

@@ -1,6 +1,6 @@
 ﻿/**
  * BudgetDashboard.js
- * Motor de Lógica Financiera — Módulo MOVIMIENTOS
+ * Motor de Lógica Financiera — Módulo PRESUPUESTO MENSUAL
  * Tipos: EGRESO (resta del presupuesto) | INGRESO (amplía disponible) | INVERSIÓN (flujo separado)
  */
 window.BudgetDashboard = class {
@@ -9,12 +9,14 @@ window.BudgetDashboard = class {
     this.currentMes = new Date().getMonth() + 1;
     this.currentAnio = new Date().getFullYear();
     this.cuentas = [];
+    this.teams = [];
     this.categorias = {};
     this.dashboardData = null;
     this.anualMovCache = new Map();
     this.vistaAnual = false;
     this.containerId = 'budgetDashboardContainer';
     this.MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    this.FIXED_COLORS = ['#FF0000','#0000FF','#00FF00','#FFFF00','#00FFFF','#FF00FF','#FFFFFF','#808080','#FFA500'];
   }
 
   // Helpers
@@ -53,6 +55,34 @@ window.BudgetDashboard = class {
     return typeof window.resolveAppIcon === 'function'
       ? window.resolveAppIcon(key, fallback)
       : fallback;
+  }
+
+  colorPaletteMarkup(name, selectedColor) {
+    const selected = String(selectedColor || '').toUpperCase();
+    return `<div class="color-swatch-group" data-palette-name="${this.escapeHtml(name)}">
+      ${this.FIXED_COLORS.map((color) => `
+        <button
+          type="button"
+          class="color-swatch-btn${selected === color ? ' active' : ''}"
+          data-color-input="${this.escapeHtml(name)}"
+          data-color="${color}"
+          style="background:${color}"
+        ></button>
+      `).join('')}
+    </div>`;
+  }
+
+  hydrateColorPalette(name, fallback = '#808080') {
+    const input = document.getElementById(name);
+    if (!input) return;
+    const selected = String(input.value || fallback).toUpperCase();
+    document.querySelectorAll(`[data-color-input="${name}"]`).forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.color === selected);
+      btn.onclick = () => {
+        input.value = btn.dataset.color;
+        this.hydrateColorPalette(name, fallback);
+      };
+    });
   }
 
   isEditableDate(fechaStr) {
@@ -94,6 +124,11 @@ window.BudgetDashboard = class {
       this.cuentas = [];
       throw e;
     }
+  }
+
+  async loadTeams() {
+    const data = await this.api('GET', '/api/teams');
+    this.teams = Array.isArray(data) ? data : [];
   }
 
   async loadCategoriasForCuenta(cuentaId) {
@@ -145,15 +180,15 @@ window.BudgetDashboard = class {
     return new Promise((resolve) => {
       const mesNombre = this.MESES[this.currentMes - 1];
       const html = `
-        <div id="prompt-clonar-overlay" class="modal-overlay" style="z-index: 100000; display:flex; align-items:center; justify-content:center;">
-          <div class="modal-box" style="padding: 24px; border-radius: 8px; background: var(--bg-card); max-width: 400px; width: 90%; text-align: center;">
-            <h3 style="margin-bottom:12px;">[${cuenta.nombre}]</h3>
-            <p style="margin: 16px 0; line-height:1.4;">No hay presupuesto configurado para ${mesNombre} ${this.currentAnio}.<br>¿Deseas configurar uno ahora?</p>
-            <label style="display:inline-flex; align-items:center; gap:8px; margin-top:16px; cursor:pointer;">
+        <div id="prompt-clonar-overlay" class="modal-overlay budget-prompt-overlay">
+          <div class="modal-box budget-prompt-box">
+            <h3 class="budget-prompt-title">[${cuenta.nombre}]</h3>
+            <p class="budget-prompt-copy">No hay presupuesto configurado para ${mesNombre} ${this.currentAnio}.<br>Deseas configurarlo ahora?</p>
+            <label class="budget-prompt-checkbox">
               <input type="checkbox" id="chk-no-recordar">
-              <span style="font-size:14px; color:var(--text-color);">No volver a recordar este mes</span>
+              <span>No volver a recordar este mes</span>
             </label>
-            <div class="modal-actions" style="margin-top:24px; justify-content:center;">
+            <div class="modal-actions modal-actions-centered modal-actions-lg">
               <button id="btn-cancel-prompt" class="btn-secondary">Cancelar</button>
               <button id="btn-ok-prompt" class="btn-primary">Configurar</button>
             </div>
@@ -191,9 +226,9 @@ window.BudgetDashboard = class {
     el.innerHTML = `
       <div class="budget-empty-state">
         <div class="budget-empty-icon">${this.icon('moneyBag', '&#x1F4B0;')}</div>
-        <h3>¡Bienvenido al módulo de MOVIMIENTOS!</h3>
+        <h3>¡Bienvenido al módulo de PRESUPUESTO MENSUAL!</h3>
         <p>Todavía no tenés ninguna cuenta configurada. Creá tu primera cuenta para comenzar a gestionar tu presupuesto.</p>
-        <button class="btn-primary" id="btn-crear-primera-cuenta" style="margin-top:12px; max-width:220px;">
+        <button class="btn-primary btn-primary-compact" id="btn-crear-primera-cuenta">
           + Crear primera cuenta
         </button>
       </div>`;
@@ -526,7 +561,7 @@ window.BudgetDashboard = class {
 
         <!-- Acciones -->
         <div class="cuenta-actions">
-          <button class="btn-nuevo-gasto" data-cuenta="${item.cuenta.id}">+ TRANSACCIÓN</button>
+          <button class="btn-nuevo-gasto" data-cuenta="${item.cuenta.id}">+ Transacción</button>
         </div>
       </div>`;
     }).join('');
@@ -575,9 +610,9 @@ window.BudgetDashboard = class {
             <button id="btn-close-cuentas" class="btn-icon btn-close-modal">${this.icon('close', '&#x2716;')}</button>
           </div>
           <div id="cuentas-list-manage" class="manage-list"></div>
-          <div class="modal-actions" style="border-top:1px solid var(--line); padding-top:16px; margin-top:8px;">
-            <button id="btn-nueva-cuenta" class="btn-primary">+ Nueva Cuenta</button>
-          </div>
+            <div class="modal-actions modal-actions-bordered">
+              <button id="btn-nueva-cuenta" class="btn-primary">+ Nueva Cuenta</button>
+            </div>
         </div>
       </div>`;
     document.body.insertAdjacentHTML('beforeend', html);
@@ -596,7 +631,7 @@ window.BudgetDashboard = class {
     const el = document.getElementById('cuentas-list-manage');
     if (!el) return;
     if (this.cuentas.length === 0) {
-      el.innerHTML = '<p style="color:var(--muted); text-align:center; padding: 20px 0;">No hay cuentas creadas aún.</p>';
+      el.innerHTML = '<p class="manage-empty">No hay cuentas creadas aun.</p>';
       return;
     }
     el.innerHTML = this.cuentas.map(c => `
@@ -641,6 +676,7 @@ window.BudgetDashboard = class {
 
   showCuentaModal(cuenta = null) {
     const isEdit = !!cuenta;
+    const selectedTeamIds = new Set((cuenta?.team_ids || []).map((id) => String(id)));
     const html = `
       <div id="cuenta-modal-overlay" class="modal-overlay">
         <div class="modal-box">
@@ -651,6 +687,18 @@ window.BudgetDashboard = class {
             </label>
             <label>Presupuesto base mensual ($)
               <input type="number" id="cf-base" value="${cuenta?.presupuesto_mensual_base || ''}" min="0" step="100" placeholder="Ej: 500000" required>
+            </label>
+            <label>Equipos con acceso total
+              <div class="team-checkbox-list">
+                ${this.teams.length
+                  ? this.teams.map((team) => `
+                    <label class="checkbox-label">
+                      <input type="checkbox" class="cf-team" value="${team.id}" ${selectedTeamIds.has(String(team.id)) ? 'checked' : ''}>
+                      ${this.escapeHtml(team.name)}
+                    </label>
+                  `).join('')
+                  : '<p class="team-empty">No hay equipos disponibles.</p>'}
+              </div>
             </label>
             <div class="modal-actions">
               <button type="button" id="btn-cancel-cuenta" class="btn-secondary">Cancelar</button>
@@ -667,13 +715,14 @@ window.BudgetDashboard = class {
       e.preventDefault();
       const nombre = document.getElementById('cf-nombre').value.trim();
       const presupuesto_mensual_base = Number(document.getElementById('cf-base').value);
+      const team_ids = Array.from(document.querySelectorAll('.cf-team:checked')).map((el) => el.value);
       if (!nombre) return;
 
       let result;
       if (isEdit) {
-        result = await this.api('PATCH', `/api/presupuesto/cuentas/${cuenta.id}`, { nombre, presupuesto_mensual_base });
+        result = await this.api('PATCH', `/api/presupuesto/cuentas/${cuenta.id}`, { nombre, presupuesto_mensual_base, team_ids });
       } else {
-        result = await this.api('POST', '/api/presupuesto/cuentas', { nombre, presupuesto_mensual_base });
+        result = await this.api('POST', '/api/presupuesto/cuentas', { nombre, presupuesto_mensual_base, team_ids });
       }
 
       if (result.error) { this.showToast(result.error, 'error'); return; }
@@ -700,8 +749,8 @@ window.BudgetDashboard = class {
           </div>
           <div id="cats-list-manage" class="manage-list"></div>
           <div class="pct-total-row" id="pct-total-row"></div>
-          <form id="cat-form" autocomplete="off" style="margin-top:16px; padding-top:16px; border-top:1px solid var(--line);">
-            <h4 style="margin:0 0 12px 0;">+ Nueva categoría</h4>
+          <form id="cat-form" autocomplete="off" class="cat-form">
+            <h4 class="cat-form-title">+ Nueva categoria</h4>
             <div class="cat-form-grid">
               <label>Nombre
                 <input type="text" id="catf-nombre" placeholder="Ej: Alimentación" required>
@@ -717,10 +766,11 @@ window.BudgetDashboard = class {
                 <input type="number" id="catf-pct" min="0" max="100" step="1" placeholder="Ej: 30">
               </label>
               <label>Color
-                <input type="color" id="catf-color" value="#6366f1">
+                <input type="hidden" id="catf-color" value="#FF0000">
+                ${this.colorPaletteMarkup('catf-color', '#FF0000')}
               </label>
             </div>
-            <div class="modal-actions" style="margin-top:12px;">
+            <div class="modal-actions modal-actions-sm">
               <button type="button" id="btn-cancel-cats" class="btn-secondary">Cerrar</button>
               <button type="submit" class="btn-primary">Agregar categoría</button>
             </div>
@@ -729,12 +779,13 @@ window.BudgetDashboard = class {
       </div>`;
     document.body.insertAdjacentHTML('beforeend', html);
     const overlay = document.getElementById('categorias-modal-overlay');
+    this.hydrateColorPalette('catf-color', '#FF0000');
 
     // Toggle % field based on tipo
     const tipoSel = document.getElementById('catf-tipo');
     const pctLabel = document.getElementById('catf-pct-label');
     const togglePct = () => {
-      pctLabel.style.display = tipoSel.value === 'EGRESO' ? 'flex' : 'none';
+      pctLabel.hidden = tipoSel.value !== 'EGRESO';
     };
     tipoSel.addEventListener('change', togglePct);
     togglePct();
@@ -758,7 +809,8 @@ window.BudgetDashboard = class {
       if (result.error) { this.showToast(result.error, 'error'); return; }
       this.showToast('Categoría agregada');
       document.getElementById('cat-form').reset();
-      document.getElementById('catf-color').value = '#6366f1';
+      document.getElementById('catf-color').value = '#FF0000';
+      this.hydrateColorPalette('catf-color', '#FF0000');
       togglePct();
       await this.loadCategoriasForCuenta(cuentaKey);
       this._renderCatsList(cuentaKey);
@@ -776,14 +828,14 @@ window.BudgetDashboard = class {
     const totalPct = egresosCats.reduce((s, c) => s + c.porcentaje_asignacion, 0);
 
     if (cats.length === 0) {
-      el.innerHTML = '<p style="color:var(--muted); text-align:center; padding:16px 0;">No hay categorías. Agregá una abajo.</p>';
+      el.innerHTML = '<p class="manage-empty manage-empty-sm">No hay categorias. Agrega una abajo.</p>';
     } else {
       el.innerHTML = cats.map(cat => {
         const tipo = cat.tipo || 'EGRESO';
         return `
         <div class="manage-item">
           <div class="manage-item-info">
-            <span class="cat-dot" style="background:${cat.color_hex}; width:14px; height:14px; border-radius:50%; display:inline-block; margin-right:6px;"></span>
+            <span class="cat-dot cat-dot-inline" style="background:${cat.color_hex}"></span>
             <strong>${this.escapeHtml(cat.nombre)}</strong>
             ${this.tipoBadge(tipo)}
             ${tipo === 'EGRESO' ? `<span class="cat-pct-badge">${cat.porcentaje_asignacion}%</span>` : ''}
@@ -822,7 +874,7 @@ window.BudgetDashboard = class {
 
   showEditCatModal(cuentaId, cat) {
     const html = `
-      <div id="edit-cat-overlay" class="modal-overlay" style="z-index:10010;">
+      <div id="edit-cat-overlay" class="modal-overlay modal-overlay-front">
         <div class="modal-box">
           <h3>${this.icon('pencil', '&#x270F;&#xFE0F;')} Editar Categoría</h3>
           <form id="edit-cat-form" autocomplete="off">
@@ -834,10 +886,10 @@ window.BudgetDashboard = class {
                 <option value="INVERSIÓN" ${cat.tipo === 'INVERSIÓN' ? 'selected' : ''}>${this.icon('investment', '&#x1F4BC;')} INVERSIÓN</option>
               </select>
             </label>
-            <label id="ecf-pct-label" style="${cat.tipo !== 'EGRESO' ? 'display:none' : ''}">
+            <label id="ecf-pct-label" ${cat.tipo !== 'EGRESO' ? 'hidden' : ''}>
               % del presupuesto <input type="number" id="ecf-pct" value="${cat.porcentaje_asignacion}" min="0" max="100" step="1">
             </label>
-            <label>Color <input type="color" id="ecf-color" value="${cat.color_hex}"></label>
+            <label>Color <input type="hidden" id="ecf-color" value="${cat.color_hex}">${this.colorPaletteMarkup('ecf-color', cat.color_hex)}</label>
             <div class="modal-actions">
               <button type="button" id="btn-cancel-edit-cat" class="btn-secondary">Cancelar</button>
               <button type="submit" class="btn-primary">Guardar</button>
@@ -847,11 +899,12 @@ window.BudgetDashboard = class {
       </div>`;
     document.body.insertAdjacentHTML('beforeend', html);
     const overlay = document.getElementById('edit-cat-overlay');
+    this.hydrateColorPalette('ecf-color', cat.color_hex);
 
     const tipoSel = document.getElementById('ecf-tipo');
     const pctLabel = document.getElementById('ecf-pct-label');
     tipoSel.addEventListener('change', () => {
-      pctLabel.style.display = tipoSel.value === 'EGRESO' ? 'flex' : 'none';
+      pctLabel.hidden = tipoSel.value !== 'EGRESO';
     });
 
     document.getElementById('btn-cancel-edit-cat').onclick = () => overlay.remove();
@@ -886,7 +939,7 @@ window.BudgetDashboard = class {
       <div id="pres-mes-overlay" class="modal-overlay">
         <div class="modal-box">
           <h3>${this.icon('calendar', '&#x1F4C5;')} Presupuesto de ${mesNombre} ${this.currentAnio}</h3>
-          <p style="color:var(--muted); margin:0 0 16px 0;">Cuenta: <strong>${this.escapeHtml(cuenta?.nombre)}</strong></p>
+          <p class="modal-helper-copy">Cuenta: <strong>${this.escapeHtml(cuenta?.nombre)}</strong></p>
           <form id="pres-mes-form" autocomplete="off">
             <label>Monto total del mes ($)
               <input type="number" id="pmf-monto" value="${actual}" min="0" step="100" required>
@@ -897,8 +950,8 @@ window.BudgetDashboard = class {
             </div>
           </form>
           ${dashItem?.presupuesto ? '' : `
-          <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line);">
-            <button id="btn-clonar-mes" class="btn-secondary" style="width:100%;">
+          <div class="modal-inline-section">
+            <button id="btn-clonar-mes" class="btn-secondary btn-block">
               ${this.icon('clipboard', '&#x1F4CB;')} Clonar desde ${this.MESES[this.currentMes === 1 ? 11 : this.currentMes - 2]} ${this.currentMes === 1 ? this.currentAnio - 1 : this.currentAnio}
             </button>
           </div>`}
@@ -946,7 +999,7 @@ window.BudgetDashboard = class {
   showGastoModal(cuentaId, gastoExistente = null) {
     const cuentaKey = String(cuentaId);
     const cats = this.categorias[cuentaKey] || [];
-    const fechaDefault = `${this.currentAnio}-${String(this.currentMes).padStart(2,'0')}-15`;
+    const fechaDefault = new Date().toISOString().split('T')[0];
     const isEdit = !!gastoExistente;
 
     if (cats.length === 0) {
@@ -958,9 +1011,11 @@ window.BudgetDashboard = class {
     const html = `
       <div id="gasto-modal-overlay" class="modal-overlay">
         <div class="modal-box">
-          <h3>${isEdit ? this.icon('pencil', '&#x270F;&#xFE0F;') + ' Editar Transacción' : '+ Nueva TRANSACCIÓN'}</h3>
+          <h3>${isEdit ? this.icon('pencil', '&#x270F;&#xFE0F;') + ' Editar transacción' : '+ Nueva transacción'}</h3>
+          <p class="modal-helper-copy">Registra el movimiento con una lectura clara del tipo de categoría, forma de pago y proyección.</p>
           <form id="gasto-form" autocomplete="off">
-            <label>Categoría <span style="color:var(--danger)">*</span>
+            <div class="modal-form-grid">
+            <label>Categoria <span class="field-required">*</span>
               <select id="gf-categoria" required>
                 <option value="">— Seleccionar categoría —</option>
                 ${cats.map(c => `<option value="${c.id}" data-tipo="${c.tipo || 'EGRESO'}" ${String(gastoExistente?.categoria_id || '') === String(c.id) ? 'selected' : ''}>${c.nombre} [${c.tipo || 'EGRESO'}]</option>`).join('')}
@@ -978,22 +1033,23 @@ window.BudgetDashboard = class {
             </label>
             <label>Método de Pago
               <select id="gf-metodo">
-                ${['Efectivo','TC','Débito','Transferencia','Otro'].map(m => `<option ${(gastoExistente?.metodo_pago || 'Efectivo') === m ? 'selected' : ''}>${m}</option>`).join('')}
+                ${['Efectivo','Tarjeta credito','Débito','Transferencia','Otro'].map(m => `<option ${(gastoExistente?.metodo_pago || 'Efectivo') === m ? 'selected' : ''}>${m}</option>`).join('')}
               </select>
             </label>
-            ${!isEdit ? `
-            <label class="checkbox-label">
-              <input type="checkbox" id="gf-recurrente"> Transacción recurrente (proyectar 12 meses) ${this.icon('repeat', '&#x1F501;')}
+            </div>
+            <div class="modal-form-stack">
+            <label class="checkbox-label checkbox-card">
+              <input type="checkbox" id="gf-recurrente" ${gastoExistente?.es_recurrente ? 'checked' : ''}> Transacción recurrente (proyectar 12 meses) ${this.icon('repeat', '&#x1F501;')}
             </label>
-            <label id="cuotas-label" style="display:flex; flex-direction:column; gap:4px;">
-              Número de cuotas
-              <input type="number" id="gf-cuotas" min="1" max="60" value="1">
+            <label id="cuotas-label" class="field-stack field-card">
+              Numero de cuotas
+              <input type="number" id="gf-cuotas" min="1" max="60" value="${gastoExistente?.total_cuotas || 1}">
             </label>
-            ` : ''}
             ${isEdit && gastoExistente?.proyeccion_id ? `
-            <label class="checkbox-label">
+            <label class="checkbox-label checkbox-card">
               <input type="checkbox" id="gf-cascade"> Aplicar cambio de monto a todos los meses futuros
             </label>` : ''}
+            </div>
             <div class="modal-actions">
               <button type="button" id="btn-cancel-gasto" class="btn-secondary">Cancelar</button>
               <button type="submit" class="btn-primary">${isEdit ? 'Guardar Cambios' : 'Registrar'}</button>
@@ -1010,10 +1066,13 @@ window.BudgetDashboard = class {
     const recCheck = document.getElementById('gf-recurrente');
     const cuotasLabel = document.getElementById('cuotas-label');
     const tipoHint = document.getElementById('gf-tipo-hint');
+    const metodoSel = document.getElementById('gf-metodo');
 
-    const onCatChange = () => {
+    const syncGastoRules = () => {
       const opt = catSel.options[catSel.selectedIndex];
       const tipo = opt?.dataset?.tipo || 'EGRESO';
+      const metodo = metodoSel?.value || 'Efectivo';
+      const isCredit = metodo === 'Tarjeta credito';
       // Update hint
       const hints = {
         EGRESO:    `${this.icon('expense', '&#x1F4B8;')} Este monto restará del presupuesto operativo.`,
@@ -1022,18 +1081,25 @@ window.BudgetDashboard = class {
       };
       tipoHint.textContent = hints[tipo] || '';
       tipoHint.className = `tipo-hint tipo-hint-${tipo.toLowerCase().replace('ó','o')}`;
-      // Toggle cuotas (only for EGRESO)
-      if (cuotasLabel) cuotasLabel.style.display = tipo === 'EGRESO' ? 'flex' : 'none';
+      if (recCheck) {
+        recCheck.hidden = isCredit;
+        if (isCredit) recCheck.checked = false;
+      }
+      if (cuotasLabel) cuotasLabel.hidden = tipo !== 'EGRESO';
+      if (cuotasLabel && isCredit) cuotasLabel.hidden = false;
     };
 
-    catSel.addEventListener('change', onCatChange);
-    onCatChange(); // Run on open
+    catSel.addEventListener('change', syncGastoRules);
+    metodoSel?.addEventListener('change', syncGastoRules);
+    syncGastoRules();
 
     if (recCheck && cuotasLabel) {
       recCheck.addEventListener('change', () => {
         const opt = catSel.options[catSel.selectedIndex];
         const tipo = opt?.dataset?.tipo || 'EGRESO';
-        cuotasLabel.style.display = (tipo === 'EGRESO' && !recCheck.checked) ? 'flex' : 'none';
+        const metodo = metodoSel?.value || 'Efectivo';
+        const isCredit = metodo === 'Tarjeta credito';
+        cuotasLabel.hidden = !(tipo === 'EGRESO' && (!recCheck.checked || isCredit));
       });
     }
 
@@ -1056,11 +1122,18 @@ window.BudgetDashboard = class {
     const monto = parseFloat(document.getElementById('gf-monto').value);
     const fecha = document.getElementById('gf-fecha').value;
     const metodo_pago = document.getElementById('gf-metodo').value;
+    const total_cuotas = parseInt(document.getElementById('gf-cuotas')?.value || '1', 10);
+    const esTarjeta = metodo_pago === 'Tarjeta credito';
+    const es_recurrente = esTarjeta ? false : (document.getElementById('gf-recurrente')?.checked || false);
+    if (esTarjeta && (!Number.isInteger(total_cuotas) || total_cuotas < 1)) {
+      this.showToast('Tarjeta credito requiere al menos 1 cuota', 'error');
+      return;
+    }
 
     if (gastoExistente) {
       const cascade_future = document.getElementById('gf-cascade')?.checked || false;
       const result = await this.api('PATCH', `/api/presupuesto/gastos/${gastoExistente.id}`, {
-        categoria_id, descripcion, monto, fecha, metodo_pago, cascade_future
+        categoria_id, descripcion, monto, fecha, metodo_pago, cascade_future, total_cuotas
       });
       if (result.error) this.showToast(result.error, 'error');
       else {
@@ -1068,8 +1141,6 @@ window.BudgetDashboard = class {
         if (result.warning) this.showToast(result.warning, 'warning');
       }
     } else {
-      const es_recurrente = document.getElementById('gf-recurrente')?.checked || false;
-      const total_cuotas = parseInt(document.getElementById('gf-cuotas')?.value || '1');
       const result = await this.api('POST', '/api/presupuesto/gastos', {
         categoria_id, cuenta_id: cuentaId, descripcion, monto, fecha,
         metodo_pago, es_recurrente, total_cuotas: es_recurrente ? 1 : total_cuotas
@@ -1119,6 +1190,7 @@ window.BudgetDashboard = class {
 
   async init() {
     try {
+      await this.loadTeams();
       await this.loadCuentas();
       for (const cuenta of this.cuentas) {
         await this.loadCategoriasForCuenta(cuenta.id);
@@ -1132,6 +1204,7 @@ window.BudgetDashboard = class {
 
   async refresh() {
     try {
+      await this.loadTeams();
       await this.loadCuentas();
       for (const cuenta of this.cuentas) {
         await this.loadCategoriasForCuenta(cuenta.id);

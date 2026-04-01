@@ -21,6 +21,9 @@ const JWT_SECRET = String(process.env.JWT_SECRET || '').trim();
 const IS_PROD = NODE_ENV === 'production';
 const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const CRON_SECRET = String(process.env.CRON_SECRET || '').trim();
+const APP_BASE_URL = String(process.env.APP_BASE_URL || '').trim() || `http://localhost:${PORT}`;
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || '').trim();
+const RESEND_FROM_EMAIL = String(process.env.RESEND_FROM_EMAIL || '').trim();
 const IS_ENTRYPOINT = require.main === module;
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
@@ -97,6 +100,41 @@ function isValidUsername(username) {
   return /^[a-zA-Z0-9_.-]{3,80}$/.test(username);
 }
 
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase().slice(0, 160);
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || ''));
+}
+
+function normalizeColorHex(color) {
+  return String(color || '').trim().toUpperCase();
+}
+
+function closestAllowedColor(color) {
+  const normalized = normalizeColorHex(color);
+  if (ALLOWED_CATEGORY_COLORS.has(normalized)) return normalized;
+  if (!isValidHexColor(normalized)) return '#808080';
+  const toRgb = (hex) => [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16)
+  ];
+  const [r, g, b] = toRgb(normalized);
+  let best = '#808080';
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const allowed of ALLOWED_CATEGORY_COLORS) {
+    const [ar, ag, ab] = toRgb(allowed);
+    const distance = ((r - ar) ** 2) + ((g - ag) ** 2) + ((b - ab) ** 2);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = allowed;
+    }
+  }
+  return best;
+}
+
 function isUniqueViolation(err) {
   if (!err) return false;
   const msg = String(err.message || '').toLowerCase();
@@ -107,6 +145,19 @@ const authAttempts = new Map();
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_MAX_ATTEMPTS = 12;
 const IN_PROGRESS_QUADRANT = 'en_progreso';
+const LEGACY_LOGIN_TOKEN_TTL = '20m';
+const RESET_TOKEN_TTL_MS = 1000 * 60 * 30;
+const ALLOWED_CATEGORY_COLORS = new Set([
+  '#FF0000',
+  '#0000FF',
+  '#00FF00',
+  '#FFFF00',
+  '#00FFFF',
+  '#FF00FF',
+  '#FFFFFF',
+  '#808080',
+  '#FFA500'
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -142,6 +193,117 @@ function authSuccess(req) {
   authAttempts.delete(ip);
 }
 
+function buildAuthResponse(user, token, extras = {}) {
+  return {
+    token,
+    user_id: user.id,
+    username: user.username,
+    email: user.email || null,
+    ...extras
+  };
+}
+
+function signUserToken(user) {
+  return jwt.sign(
+    {
+      user_id: user.id,
+      username: user.username,
+      password_version: Number(user.password_version || 0)
+    },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+
+function signLegacyCompletionToken(userId) {
+  return jwt.sign(
+    { user_id: userId, purpose: 'legacy-email-completion' },
+    JWT_SECRET,
+    { expiresIn: LEGACY_LOGIN_TOKEN_TTL }
+  );
+}
+
+function hashOpaqueToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+async function sendPasswordResetEmail(email, resetUrl) {
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) {
+    console.warn('[password-reset] Missing RESEND config. Reset URL:', resetUrl);
+    return;
+  }
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: RESEND_FROM_EMAIL,
+      to: [email],
+      subject: 'Recuperar contrasena',
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+          <h2>Recuperar contrasena</h2>
+          <p>Recibimos una solicitud para cambiar la contrasena de tu cuenta.</p>
+          <p><a href="${resetUrl}">Crear una nueva contrasena</a></p>
+          <p>Este enlace vence en 30 minutos y solo puede usarse una vez.</p>
+          <p>Si no solicitaste este cambio, podes ignorar este correo.</p>
+        </div>
+      `
+    })
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Resend error: ${response.status} ${body}`);
+  }
+}
+
+function getUserById(userId) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
+      if (err) return reject(err);
+      resolve(row || null);
+    });
+  });
+}
+
+function getUserByEmail(email) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email], (err, row) => {
+      if (err) return reject(err);
+      resolve(row || null);
+    });
+  });
+}
+
+function getUserByUsername(username) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM users WHERE username = ?', [username], (err, row) => {
+      if (err) return reject(err);
+      resolve(row || null);
+    });
+  });
+}
+
+async function verifyPassword(user, password) {
+  if (!user) return false;
+  if (String(user.password_hash || '').startsWith('$2')) {
+    return bcrypt.compare(password, user.password_hash);
+  }
+  const legacyHash = crypto.scryptSync(password, user.salt, 64).toString('hex');
+  return legacyHash === user.password_hash;
+}
+
+function markResetTokenUsed(tokenHash) {
+  return new Promise((resolve, reject) => {
+    db.run('UPDATE password_reset_tokens SET used_at = ? WHERE token_hash = ?', [nowIso(), tokenHash], function(err) {
+      if (err) return reject(err);
+      resolve(this.changes || 0);
+    });
+  });
+}
+
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -159,60 +321,201 @@ const authenticate = (req, res, next) => {
   }
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.user_id;
-    next();
+    db.get('SELECT id, username, email, password_version FROM users WHERE id = ?', [decoded.user_id], (err, user) => {
+      if (err || !user) return res.status(401).json({ error: 'Invalid or expired session' });
+      if (Number(decoded.password_version || 0) !== Number(user.password_version || 0)) {
+        return res.status(401).json({ error: 'Invalid or expired session' });
+      }
+      req.userId = user.id;
+      req.user = user;
+      next();
+    });
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired session' });
   }
 };
 
 app.post('/api/auth/register', authRateLimit, async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+  const { username, email, password } = req.body;
   const cleanUsername = normalizeUsername(username);
-  if (!isValidUsername(cleanUsername) || String(password).length < 8) {
-    return res.status(400).json({ error: 'Invalid username or password length' });
+  const cleanEmail = normalizeEmail(email);
+  if (!cleanUsername || !cleanEmail || !password) {
+    return res.status(400).json({ error: 'username, email and password required' });
+  }
+  if (!isValidUsername(cleanUsername) || !isValidEmail(cleanEmail) || String(password).length < 8) {
+    return res.status(400).json({ error: 'Invalid registration data' });
   }
 
   try {
     const hash = await bcrypt.hash(password, 10);
-    db.run('INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)', [cleanUsername, hash, ''], function(err) {
-      if (err) {
-        if (isUniqueViolation(err)) return res.status(400).json({ error: 'Username already exists' });
-        return res.status(500).json({ error: 'Internal server error' });
+    db.run(
+      'INSERT INTO users (username, email, password_hash, salt, password_version) VALUES (?, ?, ?, ?, 0)',
+      [cleanUsername, cleanEmail, hash, ''],
+      function(err) {
+        if (err) {
+          if (isUniqueViolation(err)) {
+            const msg = String(err.message || '').toLowerCase();
+            if (msg.includes('email')) return res.status(400).json({ error: 'Email already exists' });
+            return res.status(400).json({ error: 'Username already exists' });
+          }
+          return res.status(500).json({ error: 'Internal server error' });
+        }
+        const user = {
+          id: this.lastID,
+          username: cleanUsername,
+          email: cleanEmail,
+          password_version: 0
+        };
+        const token = signUserToken(user);
+        authSuccess(req);
+        res.setHeader('Set-Cookie', authCookie(token));
+        res.status(201).json(buildAuthResponse(user, token));
       }
-      const token = jwt.sign({ user_id: this.lastID, username: cleanUsername }, JWT_SECRET, { expiresIn: '7d' });
-      authSuccess(req);
-      res.setHeader('Set-Cookie', authCookie(token));
-      res.status(201).json({ token, username: cleanUsername, user_id: this.lastID });
-    });
-  } catch (error) {
+    );
+  } catch (_error) {
     res.status(500).json({ error: 'Internal server error while hashing password' });
   }
 });
 
-app.post('/api/auth/login', authRateLimit, (req, res) => {
-  const { username, password } = req.body;
-  const cleanUsername = normalizeUsername(username);
-  db.get('SELECT * FROM users WHERE username = ?', [cleanUsername], async (err, user) => {
-    if (err) return res.status(500).json({ error: 'Internal server error' });
+app.post('/api/auth/login', authRateLimit, async (req, res) => {
+  const { email, password } = req.body;
+  const cleanEmail = normalizeEmail(email);
+  if (!cleanEmail || !password) return res.status(400).json({ error: 'email and password required' });
+  try {
+    const user = await getUserByEmail(cleanEmail);
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-    
-    let isMatch = false;
-    if (user.password_hash.startsWith('$2')) {
-      isMatch = await bcrypt.compare(password, user.password_hash);
-    } else {
-      const legacyHash = crypto.scryptSync(password, user.salt, 64).toString('hex');
-      isMatch = (legacyHash === user.password_hash);
-    }
-    
+    const isMatch = await verifyPassword(user, password);
     if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
-    
-    const token = jwt.sign({ user_id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+
+    const token = signUserToken(user);
     authSuccess(req);
     res.setHeader('Set-Cookie', authCookie(token));
-    res.json({ token, username: user.username, user_id: user.id });
-  });
+    res.json(buildAuthResponse(user, token));
+  } catch (_err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/login-legacy', authRateLimit, async (req, res) => {
+  const { username, password } = req.body;
+  const cleanUsername = normalizeUsername(username);
+  if (!cleanUsername || !password) return res.status(400).json({ error: 'username and password required' });
+  try {
+    const user = await getUserByUsername(cleanUsername);
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const isMatch = await verifyPassword(user, password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+    if (user.email && isValidEmail(user.email)) {
+      return res.status(400).json({ error: 'This account already uses email login' });
+    }
+    authSuccess(req);
+    return res.json({
+      requires_email: true,
+      legacy_token: signLegacyCompletionToken(user.id),
+      username: user.username
+    });
+  } catch (_err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/complete-email', authRateLimit, async (req, res) => {
+  const { legacy_token, email } = req.body;
+  const cleanEmail = normalizeEmail(email);
+  if (!legacy_token || !cleanEmail) return res.status(400).json({ error: 'legacy_token and email required' });
+  if (!isValidEmail(cleanEmail)) return res.status(400).json({ error: 'Email invalido' });
+  try {
+    const decoded = jwt.verify(legacy_token, JWT_SECRET);
+    if (decoded.purpose !== 'legacy-email-completion') {
+      return res.status(401).json({ error: 'Invalid legacy token' });
+    }
+    const user = await getUserById(decoded.user_id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    db.run(
+      'UPDATE users SET email = ? WHERE id = ?',
+      [cleanEmail, user.id],
+      async function(err) {
+        if (err) {
+          if (isUniqueViolation(err)) return res.status(400).json({ error: 'Email already exists' });
+          return res.status(500).json({ error: 'Internal server error' });
+        }
+        const updatedUser = await getUserById(user.id);
+        const token = signUserToken(updatedUser);
+        res.setHeader('Set-Cookie', authCookie(token));
+        return res.json(buildAuthResponse(updatedUser, token));
+      }
+    );
+  } catch (_err) {
+    return res.status(401).json({ error: 'Invalid or expired legacy token' });
+  }
+});
+
+app.post('/api/auth/forgot-password', authRateLimit, async (req, res) => {
+  const cleanEmail = normalizeEmail(req.body?.email);
+  const generic = { success: true, message: 'Si existe una cuenta asociada, enviamos instrucciones al correo.' };
+  if (!cleanEmail || !isValidEmail(cleanEmail)) return res.json(generic);
+  try {
+    const user = await getUserByEmail(cleanEmail);
+    if (!user) return res.json(generic);
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashOpaqueToken(rawToken);
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
+    db.run(
+      'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
+      [user.id, tokenHash, expiresAt],
+      async (err) => {
+        if (err) {
+          console.error('[forgot-password]', err.message);
+          return res.json(generic);
+        }
+        const resetUrl = `${APP_BASE_URL}/?reset_token=${encodeURIComponent(rawToken)}`;
+        try {
+          await sendPasswordResetEmail(cleanEmail, resetUrl);
+        } catch (emailErr) {
+          console.error('[forgot-password-email]', emailErr.message);
+        }
+        return res.json(generic);
+      }
+    );
+  } catch (_err) {
+    return res.json(generic);
+  }
+});
+
+app.post('/api/auth/reset-password', authRateLimit, async (req, res) => {
+  const { reset_token, password } = req.body;
+  if (!reset_token || String(password || '').length < 8) {
+    return res.status(400).json({ error: 'Invalid reset request' });
+  }
+  const tokenHash = hashOpaqueToken(reset_token);
+  try {
+    db.get(
+      `SELECT prt.*, u.id as user_id, u.username, u.email, u.password_version
+       FROM password_reset_tokens prt
+       JOIN users u ON u.id = prt.user_id
+       WHERE prt.token_hash = ? AND prt.used_at IS NULL AND prt.expires_at > ?
+       LIMIT 1`,
+      [tokenHash, nowIso()],
+      async (err, row) => {
+        if (err || !row) return res.status(400).json({ error: 'Reset link invalido o vencido' });
+        const hash = await bcrypt.hash(password, 10);
+        db.run(
+          'UPDATE users SET password_hash = ?, salt = ?, password_version = COALESCE(password_version, 0) + 1 WHERE id = ?',
+          [hash, '', row.user_id],
+          async (updateErr) => {
+            if (updateErr) return res.status(500).json({ error: 'Internal server error' });
+            await markResetTokenUsed(tokenHash);
+            const updatedUser = await getUserById(row.user_id);
+            const token = signUserToken(updatedUser);
+            res.setHeader('Set-Cookie', authCookie(token));
+            return res.json(buildAuthResponse(updatedUser, token, { password_reset: true }));
+          }
+        );
+      }
+    );
+  } catch (_err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.post('/api/auth/logout', authenticate, (req, res) => {
@@ -221,9 +524,160 @@ app.post('/api/auth/logout', authenticate, (req, res) => {
 });
 
 app.get('/api/auth/me', authenticate, (req, res) => {
-  db.get('SELECT id, username FROM users WHERE id = ?', [req.userId], (err, user) => {
+  db.get('SELECT id, username, email FROM users WHERE id = ?', [req.userId], (err, user) => {
     if (err || !user) return res.status(401).json({ error: 'Unauthorized' });
-    return res.json({ user_id: user.id, username: user.username });
+    return res.json({ user_id: user.id, username: user.username, email: user.email || null });
+  });
+});
+
+function getAccessibleTeamIds(userId) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      `SELECT DISTINCT t.id
+       FROM teams t
+       LEFT JOIN team_memberships tm ON tm.team_id = t.id
+       WHERE t.user_id = ? OR tm.member_user_id = ?`,
+      [userId, userId],
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve((rows || []).map((row) => Number(row.id)));
+      }
+    );
+  });
+}
+
+function userHasTeamAccess(userId, teamId) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT t.id
+       FROM teams t
+       LEFT JOIN team_memberships tm ON tm.team_id = t.id AND tm.member_user_id = ?
+       WHERE t.id = ? AND (t.user_id = ? OR tm.member_user_id = ?)
+       LIMIT 1`,
+      [userId, teamId, userId, userId],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve(Boolean(row));
+      }
+    );
+  });
+}
+
+function userOwnsTeam(userId, teamId) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT id FROM teams WHERE id = ? AND user_id = ?', [teamId, userId], (err, row) => {
+      if (err) return reject(err);
+      resolve(Boolean(row));
+    });
+  });
+}
+
+function getCuentaTeamIds(cuentaId) {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT team_id FROM cuenta_equipos WHERE cuenta_id = ?', [cuentaId], (err, rows) => {
+      if (err) return reject(err);
+      resolve((rows || []).map((row) => Number(row.team_id)));
+    });
+  });
+}
+
+function syncCuentaTeams(cuentaId, teamIds) {
+  const uniqueIds = [...new Set((teamIds || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+  return new Promise((resolve, reject) => {
+    db.run('DELETE FROM cuenta_equipos WHERE cuenta_id = ?', [cuentaId], (deleteErr) => {
+      if (deleteErr) return reject(deleteErr);
+      if (!uniqueIds.length) return resolve([]);
+      let index = 0;
+      const insertNext = () => {
+        if (index >= uniqueIds.length) return resolve(uniqueIds);
+        db.run(
+          'INSERT INTO cuenta_equipos (cuenta_id, team_id) VALUES (?, ?)',
+          [cuentaId, uniqueIds[index]],
+          (insertErr) => {
+            if (insertErr) return reject(insertErr);
+            index += 1;
+            insertNext();
+          }
+        );
+      };
+      insertNext();
+    });
+  });
+}
+
+function getTeamMemberIds(teamId) {
+  return new Promise((resolve, reject) => {
+    db.all('SELECT member_user_id FROM team_memberships WHERE team_id = ?', [teamId], (err, rows) => {
+      if (err) return reject(err);
+      resolve((rows || []).map((row) => Number(row.member_user_id)));
+    });
+  });
+}
+
+function getTeamDependencyCounts(teamId) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT
+         (SELECT COUNT(*) FROM tasks WHERE team_id = ? AND COALESCE(completed, 0) = 0) AS open_tasks,
+         (SELECT COUNT(*) FROM cuenta_equipos WHERE team_id = ?) AS linked_accounts,
+         (SELECT COUNT(*) FROM inv_activos WHERE team_id = ?) AS linked_investments`,
+      [teamId, teamId, teamId],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve({
+          open_tasks: Number(row?.open_tasks || 0),
+          linked_accounts: Number(row?.linked_accounts || 0),
+          linked_investments: Number(row?.linked_investments || 0)
+        });
+      }
+    );
+  });
+}
+
+function cleanupTeamAssignments(teamId) {
+  return new Promise((resolve, reject) => {
+    db.run('UPDATE tasks SET team_id = NULL, assigned_user_id = NULL, assigned = ? WHERE team_id = ?', ['', teamId], (taskErr) => {
+      if (taskErr) return reject(taskErr);
+      db.run('DELETE FROM cuenta_equipos WHERE team_id = ?', [teamId], (accountErr) => {
+        if (accountErr) return reject(accountErr);
+        db.run('UPDATE inv_activos SET team_id = NULL WHERE team_id = ?', [teamId], (assetErr) => {
+          if (assetErr) return reject(assetErr);
+          db.run('UPDATE inv_transacciones SET team_id = NULL WHERE team_id = ?', [teamId], (txErr) => {
+            if (txErr) return reject(txErr);
+            resolve();
+          });
+        });
+      });
+    });
+  });
+}
+
+function getInvestmentTeamAccessClause(alias = 'a') {
+  return `(${alias}.user_id = ? OR EXISTS (
+    SELECT 1
+    FROM team_memberships tm
+    WHERE tm.team_id = ${alias}.team_id AND tm.member_user_id = ?
+  ))`;
+}
+
+app.get('/api/users/search', authenticate, (req, res) => {
+  const rawQuery = String(req.query.q || '').trim();
+  const normalizedQuery = rawQuery.replace(/^@+/, '').slice(0, 80);
+  const sql = normalizedQuery
+    ? `SELECT id, username
+       FROM users
+       WHERE LOWER(username) LIKE LOWER(?)
+       ORDER BY username ASC
+       LIMIT 10`
+    : `SELECT id, username
+       FROM users
+       ORDER BY username ASC
+       LIMIT 10`;
+  const params = normalizedQuery ? [`${normalizedQuery}%`] : [];
+
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    return res.json(rows || []);
   });
 });
 
@@ -234,8 +688,13 @@ app.get('/api/tasks', authenticate, (req, res) => {
      LEFT JOIN teams tm ON tm.id = t.team_id
      LEFT JOIN users au ON au.id = t.assigned_user_id
      WHERE t.user_id = ?
+        OR t.assigned_user_id = ?
+        OR EXISTS (
+          SELECT 1 FROM team_memberships tmm
+          WHERE tmm.team_id = t.team_id AND tmm.member_user_id = ?
+        )
      ORDER BY t.position ASC, t.id DESC`,
-    [req.userId],
+    [req.userId, req.userId, req.userId],
     (err, rows) => {
     if (err) {
       return res.status(500).json({ error: err.message });
@@ -322,14 +781,9 @@ app.post('/api/tasks', authenticate, (req, res) => {
   };
 
   if (normalizedTeamId) {
-    db.get('SELECT id FROM teams WHERE id = ? AND user_id = ?', [normalizedTeamId, req.userId], (teamErr, teamRow) => {
-      if (teamErr) return res.status(500).json({ error: teamErr.message });
-      if (!teamRow) return res.status(400).json({ error: 'El equipo seleccionado no existe' });
-
-      if (!normalizedAssignedUserId) {
-        return validateAndInsert();
-      }
-
+    userHasTeamAccess(req.userId, normalizedTeamId).then((hasAccess) => {
+      if (!hasAccess) return res.status(400).json({ error: 'El equipo seleccionado no existe o no te pertenece' });
+      if (!normalizedAssignedUserId) return validateAndInsert();
       db.get(
         'SELECT 1 FROM team_memberships WHERE team_id = ? AND member_user_id = ?',
         [normalizedTeamId, normalizedAssignedUserId],
@@ -339,7 +793,7 @@ app.post('/api/tasks', authenticate, (req, res) => {
           return validateAndInsert();
         }
       );
-    });
+    }).catch((teamErr) => res.status(500).json({ error: teamErr.message }));
     return;
   }
 
@@ -546,11 +1000,9 @@ app.patch('/api/tasks/:id', authenticate, (req, res) => {
       return persistTaskChanges();
     }
 
-    db.get('SELECT id FROM teams WHERE id = ? AND user_id = ?', [nextTeamId, req.userId], (teamErr, team) => {
-      if (teamErr) return res.status(500).json({ error: teamErr.message });
-      if (!team) return res.status(400).json({ error: 'El equipo seleccionado no existe' });
+    userHasTeamAccess(req.userId, nextTeamId).then((hasAccess) => {
+      if (!hasAccess) return res.status(400).json({ error: 'El equipo seleccionado no existe o no te pertenece' });
       if (!nextAssignedUserId) return persistTaskChanges();
-
       db.get(
         'SELECT 1 FROM team_memberships WHERE team_id = ? AND member_user_id = ?',
         [nextTeamId, nextAssignedUserId],
@@ -560,7 +1012,7 @@ app.patch('/api/tasks/:id', authenticate, (req, res) => {
           return persistTaskChanges();
         }
       );
-    });
+    }).catch((teamErr) => res.status(500).json({ error: teamErr.message }));
   });
 });
 
@@ -582,7 +1034,14 @@ app.delete('/api/tasks/:id', authenticate, (req, res) => {
 
 // Team API
 app.get('/api/teams', authenticate, (req, res) => {
-  db.all('SELECT id, name, user_id, created_at FROM teams WHERE user_id = ? ORDER BY name ASC', [req.userId], (err, teams) => {
+  db.all(
+    `SELECT DISTINCT t.id, t.name, t.user_id, t.created_at
+     FROM teams t
+     LEFT JOIN team_memberships tm ON tm.team_id = t.id
+     WHERE t.user_id = ? OR tm.member_user_id = ?
+     ORDER BY t.name ASC`,
+    [req.userId, req.userId],
+    (err, teams) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
@@ -612,12 +1071,14 @@ app.get('/api/teams', authenticate, (req, res) => {
         return res.json(
           teams.map((team) => ({
             ...team,
+            is_owner: Number(team.user_id) === Number(req.userId),
             members: membersByTeam.get(team.id) || []
           }))
         );
       }
     );
-  });
+    }
+  );
 });
 
 app.post('/api/teams', authenticate, (req, res) => {
@@ -628,25 +1089,66 @@ app.post('/api/teams', authenticate, (req, res) => {
       if (isUniqueViolation(err)) return res.status(400).json({ error: 'Team already exists' });
       return res.status(500).json({ error: err.message });
     }
-    return res.status(201).json({ id: this.lastID, name, user_id: req.userId, members: [] });
+    const teamId = this.lastID;
+    db.run(
+      'INSERT OR IGNORE INTO team_memberships (team_id, member_user_id) VALUES (?, ?)',
+      [teamId, req.userId],
+      (memberErr) => {
+        if (memberErr) return res.status(500).json({ error: memberErr.message });
+        return res.status(201).json({
+          id: teamId,
+          name,
+          user_id: req.userId,
+          is_owner: true,
+          members: [{ user_id: req.userId, username: req.user.username }]
+        });
+      }
+    );
   });
+});
+
+app.patch('/api/teams/:id', authenticate, (req, res) => {
+  const teamId = toOptionalPositiveInt(req.params.id);
+  if (!teamId) return res.status(400).json({ error: 'team id invalido' });
+  const name = sanitizeText(req.body?.name, 120);
+  if (!name) return res.status(400).json({ error: 'name is required' });
+
+  db.run(
+    'UPDATE teams SET name = ? WHERE id = ? AND user_id = ?',
+    [name, teamId, req.userId],
+    function(err) {
+      if (err) {
+        if (isUniqueViolation(err)) return res.status(400).json({ error: 'Team already exists' });
+        return res.status(500).json({ error: err.message });
+      }
+      if (this.changes === 0) return res.status(404).json({ error: 'Team not found' });
+      return res.json({ id: teamId, name, updated: true });
+    }
+  );
 });
 
 app.delete('/api/teams/:id', authenticate, (req, res) => {
   const teamId = toOptionalPositiveInt(req.params.id);
   if (!teamId) return res.status(400).json({ error: 'team id invalido' });
-  db.run(
-    'UPDATE tasks SET team_id = NULL, assigned_user_id = NULL, assigned = ? WHERE user_id = ? AND team_id = ?',
-    ['', req.userId, teamId],
-    (updateErr) => {
-      if (updateErr) return res.status(500).json({ error: updateErr.message });
-      db.run('DELETE FROM teams WHERE id = ? AND user_id = ?', [teamId, req.userId], function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Team not found' });
-        return res.json({ id: teamId, deleted: true });
+  const forceCleanup = req.body?.force_cleanup === true;
+  userOwnsTeam(req.userId, teamId).then(async (isOwner) => {
+    if (!isOwner) return res.status(404).json({ error: 'Team not found' });
+    const deps = await getTeamDependencyCounts(teamId);
+    const hasDeps = deps.open_tasks > 0 || deps.linked_accounts > 0 || deps.linked_investments > 0;
+    if (hasDeps && !forceCleanup) {
+      return res.status(409).json({
+        error: 'El equipo tiene asignaciones activas',
+        requires_cleanup: true,
+        dependencies: deps
       });
     }
-  );
+    await cleanupTeamAssignments(teamId);
+    db.run('DELETE FROM teams WHERE id = ? AND user_id = ?', [teamId, req.userId], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Team not found' });
+      return res.json({ id: teamId, deleted: true, cleaned_up: hasDeps });
+    });
+  }).catch((err) => res.status(500).json({ error: err.message }));
 });
 
 app.post('/api/teams/:id/members', authenticate, (req, res) => {
@@ -683,25 +1185,30 @@ app.delete('/api/teams/:id/members/:memberUserId', authenticate, (req, res) => {
   const memberUserId = toOptionalPositiveInt(req.params.memberUserId);
   if (!teamId || !memberUserId) return res.status(400).json({ error: 'id invalido' });
 
-  db.run(
-    `DELETE FROM team_memberships
-     WHERE team_id = ?
-       AND member_user_id = ?
-       AND team_id IN (SELECT id FROM teams WHERE id = ? AND user_id = ?)`,
-    [teamId, memberUserId, teamId, req.userId],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) return res.status(404).json({ error: 'Team member not found' });
-      db.run(
-        'UPDATE tasks SET assigned_user_id = NULL, assigned = ? WHERE user_id = ? AND team_id = ? AND assigned_user_id = ?',
-        ['', req.userId, teamId, memberUserId],
-        (updateErr) => {
-          if (updateErr) return res.status(500).json({ error: updateErr.message });
-          return res.json({ team_id: teamId, user_id: memberUserId, deleted: true });
-        }
-      );
+  userOwnsTeam(req.userId, teamId).then((isOwner) => {
+    if (!isOwner) return res.status(404).json({ error: 'Team not found' });
+    if (Number(memberUserId) === Number(req.userId)) {
+      return res.status(400).json({ error: 'El creador del equipo no puede quitarse del equipo' });
     }
-  );
+    db.run(
+      `DELETE FROM team_memberships
+       WHERE team_id = ?
+         AND member_user_id = ?`,
+      [teamId, memberUserId],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: 'Team member not found' });
+        db.run(
+          'UPDATE tasks SET assigned_user_id = NULL, assigned = ? WHERE team_id = ? AND assigned_user_id = ?',
+          ['', teamId, memberUserId],
+          (updateErr) => {
+            if (updateErr) return res.status(500).json({ error: updateErr.message });
+            return res.json({ team_id: teamId, user_id: memberUserId, deleted: true });
+          }
+        );
+      }
+    );
+  }).catch((err) => res.status(500).json({ error: err.message }));
 });
 
 // Legacy endpoint compatibility
@@ -823,32 +1330,41 @@ app.post('/api/inv/sectores', authenticate, (req, res) => {
 
 app.get('/api/inv/activos', authenticate, (req, res) => {
   db.all(`
-    SELECT a.*, s.nombre as sector_nombre 
+    SELECT a.*, s.nombre as sector_nombre, tm.name as team_name
     FROM inv_activos a 
     LEFT JOIN inv_sectores s ON a.id_sector = s.id_sector
-    WHERE a.user_id = ?
+    LEFT JOIN teams tm ON tm.id = a.team_id
+    WHERE ${getInvestmentTeamAccessClause('a')}
     ORDER BY a.ticker ASC
-  `, [req.userId], (err, rows) => {
+  `, [req.userId, req.userId], (err, rows) => {
     if (err) return res.status(500).json({ error: 'Internal server error' });
     res.json(rows);
   });
 });
 
-app.post('/api/inv/activos', authenticate, (req, res) => {
-  const { ticker, nombre, id_sector, clase, api_provider, api_id } = req.body;
+app.post('/api/inv/activos', authenticate, async (req, res) => {
+  const { ticker, nombre, id_sector, clase, api_provider, api_id, team_id = null } = req.body;
   const cleanTicker = sanitizeText(ticker, 30).toUpperCase();
   const cleanNombre = sanitizeText(nombre, 120);
   const cleanClase = sanitizeText(clase, 40);
   if (!cleanTicker || !cleanClase) return res.status(400).json({ error: 'ticker and clase are required' });
+  const normalizedTeamId = team_id ? toOptionalPositiveInt(team_id) : null;
+  if (team_id !== null && team_id !== undefined && team_id !== '' && !normalizedTeamId) {
+    return res.status(400).json({ error: 'team_id invalido' });
+  }
+  if (normalizedTeamId) {
+    const hasTeam = await userHasTeamAccess(req.userId, normalizedTeamId);
+    if (!hasTeam) return res.status(400).json({ error: 'team_id invalido' });
+  }
 
   const insertActivo = (sectorId) => {
-    const sql = `INSERT INTO inv_activos (ticker, nombre, id_sector, clase, api_provider, api_id, precio_mercado, fecha_ultimo_precio, user_id) 
-                 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?)`;
-    const params = [cleanTicker, cleanNombre || '', sectorId || null, cleanClase, sanitizeText(api_provider || 'manual', 20), sanitizeText(api_id || '', 80) || null, req.userId];
+    const sql = `INSERT INTO inv_activos (ticker, nombre, id_sector, clase, api_provider, api_id, precio_mercado, fecha_ultimo_precio, user_id, team_id)
+                 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`;
+    const params = [cleanTicker, cleanNombre || '', sectorId || null, cleanClase, sanitizeText(api_provider || 'manual', 20), sanitizeText(api_id || '', 80) || null, req.userId, normalizedTeamId];
 
     db.run(sql, params, function(err) {
       if (err) return res.status(500).json({ error: 'Internal server error' });
-      db.get('SELECT * FROM inv_activos WHERE id_activo = ? AND user_id = ?', [this.lastID, req.userId], (selectErr, row) => {
+      db.get('SELECT * FROM inv_activos WHERE id_activo = ?', [this.lastID], (selectErr, row) => {
         if (selectErr || !row) return res.status(500).json({ error: 'Internal server error' });
         res.status(201).json(row);
       });
@@ -866,13 +1382,35 @@ app.post('/api/inv/activos', authenticate, (req, res) => {
   }
 });
 
-app.patch('/api/inv/activos/:id', authenticate, (req, res) => {
+app.patch('/api/inv/activos/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { precio_mercado } = req.body;
+  const { precio_mercado, team_id } = req.body;
   const precio = sanitizeNumber(precio_mercado);
-  if (precio === null) return res.status(400).json({ error: 'precio_mercado is required' });
+  const normalizedTeamId = team_id === undefined
+    ? undefined
+    : (team_id === null || team_id === '' ? null : toOptionalPositiveInt(team_id));
+  if (team_id !== undefined && team_id !== null && team_id !== '' && !normalizedTeamId) {
+    return res.status(400).json({ error: 'team_id invalido' });
+  }
+  if (precio === null && team_id === undefined) return res.status(400).json({ error: 'precio_mercado is required' });
+  if (normalizedTeamId) {
+    const hasTeam = await userHasTeamAccess(req.userId, normalizedTeamId);
+    if (!hasTeam) return res.status(400).json({ error: 'team_id invalido' });
+  }
 
-  db.run('UPDATE inv_activos SET precio_mercado = ?, fecha_ultimo_precio = CURRENT_TIMESTAMP WHERE id_activo = ? AND user_id = ?', [precio, id, req.userId], function(err) {
+  const updates = [];
+  const params = [];
+  if (precio !== null) {
+    updates.push('precio_mercado = ?');
+    params.push(precio);
+    updates.push('fecha_ultimo_precio = CURRENT_TIMESTAMP');
+  }
+  if (team_id !== undefined) {
+    updates.push('team_id = ?');
+    params.push(normalizedTeamId);
+  }
+  params.push(id, req.userId, req.userId);
+  db.run(`UPDATE inv_activos SET ${updates.join(', ')} WHERE id_activo = ? AND ${getInvestmentTeamAccessClause('inv_activos')}`, params, function(err) {
     if (err) return res.status(500).json({ error: 'Internal server error' });
     if (this.changes === 0) return res.status(404).json({ error: 'Activo not found' });
     res.json({ success: true, changes: this.changes });
@@ -910,10 +1448,10 @@ app.get('/api/inv/validate/:ticker', authenticate, async (req, res) => {
 
 app.get('/api/inv/transacciones', authenticate, (req, res) => {
   db.all(`
-    SELECT t.*, a.ticker 
+    SELECT t.*, a.ticker, a.team_id
     FROM inv_transacciones t 
     JOIN inv_activos a ON t.id_activo = a.id_activo 
-    WHERE t.user_id = ? AND a.user_id = ?
+    WHERE ${getInvestmentTeamAccessClause('a')}
     ORDER BY t.fecha_operacion DESC, t.id_transaccion DESC
   `, [req.userId, req.userId], (err, rows) => {
     if (err) return res.status(500).json({ error: 'Internal server error' });
@@ -931,13 +1469,13 @@ app.post('/api/inv/transacciones', authenticate, (req, res) => {
   const precioNum = sanitizeNumber(precio_operacion);
   if (cantidadNum === null || precioNum === null) return res.status(400).json({ error: 'cantidad/precio invalidos' });
 
-  db.get('SELECT id_activo FROM inv_activos WHERE id_activo = ? AND user_id = ?', [id_activo, req.userId], (activoErr, activo) => {
+  db.get(`SELECT id_activo, team_id FROM inv_activos WHERE id_activo = ? AND ${getInvestmentTeamAccessClause('inv_activos')}`, [id_activo, req.userId, req.userId], (activoErr, activo) => {
     if (activoErr) return res.status(500).json({ error: 'Internal server error' });
     if (!activo) return res.status(404).json({ error: 'Activo not found' });
 
-    const sql = `INSERT INTO inv_transacciones (fecha_operacion, id_activo, tipo_movimiento, cantidad, precio_operacion, moneda, resta_liquidez, tna, user_id) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-    const params = [fecha_operacion || new Date().toISOString().split('T')[0], id_activo, sanitizeText(tipo_movimiento, 20), cantidadNum, precioNum, sanitizeText(moneda, 10), resta_liquidez ? 1 : 0, tna ? Number(tna) : null, req.userId];
+    const sql = `INSERT INTO inv_transacciones (fecha_operacion, id_activo, tipo_movimiento, cantidad, precio_operacion, moneda, resta_liquidez, tna, user_id, team_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const params = [fecha_operacion || new Date().toISOString().split('T')[0], id_activo, sanitizeText(tipo_movimiento, 20), cantidadNum, precioNum, sanitizeText(moneda, 10), resta_liquidez ? 1 : 0, tna ? Number(tna) : null, req.userId, activo.team_id || null];
 
     db.run(sql, params, function(err) {
       if (err) return res.status(500).json({ error: 'Internal server error' });
@@ -949,15 +1487,15 @@ app.post('/api/inv/transacciones', authenticate, (req, res) => {
 app.get('/api/inv/portfolio', authenticate, (req, res) => {
   const query = `
     SELECT 
-      a.id_activo, a.ticker, a.nombre, a.clase, a.precio_mercado, a.fecha_ultimo_precio, a.api_provider,
+      a.id_activo, a.ticker, a.nombre, a.clase, a.precio_mercado, a.fecha_ultimo_precio, a.api_provider, a.team_id,
       s.nombre as sector, s.id_sector,
       SUM(CASE WHEN t.tipo_movimiento = 'INGRESO' THEN t.cantidad ELSE -t.cantidad END) as cantidad_total,
       SUM(CASE WHEN t.tipo_movimiento = 'INGRESO' THEN t.cantidad * t.precio_operacion WHEN t.tipo_movimiento = 'EGRESO' THEN -t.cantidad * t.precio_operacion ELSE 0 END) as costo_historico,
       MAX(t.moneda) as moneda_operacion
     FROM inv_activos a
     LEFT JOIN inv_sectores s ON a.id_sector = s.id_sector
-    LEFT JOIN inv_transacciones t ON a.id_activo = t.id_activo AND t.user_id = ?
-    WHERE a.user_id = ?
+    LEFT JOIN inv_transacciones t ON a.id_activo = t.id_activo
+    WHERE ${getInvestmentTeamAccessClause('a')}
     GROUP BY a.id_activo
     HAVING cantidad_total > 0
   `;
@@ -1079,15 +1617,35 @@ function addMonths(dateStr, n) {
   return d.toISOString().split('T')[0];
 }
 
+function normalizePaymentMethod(method) {
+  const value = sanitizeText(method, 40) || 'Efectivo';
+  if (value.toUpperCase() === 'TC') return 'Tarjeta credito';
+  return value;
+}
+
+function roundCurrency(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
 function userHasCuentaAccess(userId, cuentaId) {
   return new Promise((resolve, reject) => {
     db.get(
       `SELECT c.id
        FROM cuentas c
        LEFT JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id AND cu.user_id = ?
-       WHERE c.id = ? AND (c.user_id = ? OR cu.user_id = ?)
+       WHERE c.id = ?
+         AND (
+           c.user_id = ?
+           OR cu.user_id = ?
+           OR EXISTS (
+             SELECT 1
+             FROM cuenta_equipos ce
+             JOIN team_memberships tm ON tm.team_id = ce.team_id
+             WHERE ce.cuenta_id = c.id AND tm.member_user_id = ?
+           )
+         )
        LIMIT 1`,
-      [userId, cuentaId, userId, userId],
+      [userId, cuentaId, userId, userId, userId],
       (err, row) => {
         if (err) return reject(err);
         resolve(Boolean(row));
@@ -1103,9 +1661,19 @@ function getCategoriaOwnedByUser(userId, categoriaId) {
        FROM categorias cat
        JOIN cuentas c ON c.id = cat.cuenta_id
        LEFT JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id AND cu.user_id = ?
-       WHERE cat.id = ? AND (c.user_id = ? OR cu.user_id = ?)
+       WHERE cat.id = ?
+         AND (
+           c.user_id = ?
+           OR cu.user_id = ?
+           OR EXISTS (
+             SELECT 1
+             FROM cuenta_equipos ce
+             JOIN team_memberships tm ON tm.team_id = ce.team_id
+             WHERE ce.cuenta_id = c.id AND tm.member_user_id = ?
+           )
+         )
        LIMIT 1`,
-      [userId, categoriaId, userId, userId],
+      [userId, categoriaId, userId, userId, userId],
       (err, row) => {
         if (err) return reject(err);
         resolve(row || null);
@@ -1121,9 +1689,19 @@ function getGastoOwnedByUser(userId, gastoId) {
        FROM gastos g
        JOIN cuentas c ON c.id = g.cuenta_id
        LEFT JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id AND cu.user_id = ?
-       WHERE g.id = ? AND (c.user_id = ? OR cu.user_id = ?)
+       WHERE g.id = ?
+         AND (
+           c.user_id = ?
+           OR cu.user_id = ?
+           OR EXISTS (
+             SELECT 1
+             FROM cuenta_equipos ce
+             JOIN team_memberships tm ON tm.team_id = ce.team_id
+             WHERE ce.cuenta_id = c.id AND tm.member_user_id = ?
+           )
+         )
        LIMIT 1`,
-      [userId, gastoId, userId, userId],
+      [userId, gastoId, userId, userId, userId],
       (err, row) => {
         if (err) return reject(err);
         resolve(row || null);
@@ -1139,9 +1717,19 @@ function getPresupuestoOwnedByUser(userId, presupuestoId) {
        FROM presupuestos_mensuales pm
        JOIN cuentas c ON c.id = pm.cuenta_id
        LEFT JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id AND cu.user_id = ?
-       WHERE pm.id = ? AND (c.user_id = ? OR cu.user_id = ?)
+       WHERE pm.id = ?
+         AND (
+           c.user_id = ?
+           OR cu.user_id = ?
+           OR EXISTS (
+             SELECT 1
+             FROM cuenta_equipos ce
+             JOIN team_memberships tm ON tm.team_id = ce.team_id
+             WHERE ce.cuenta_id = c.id AND tm.member_user_id = ?
+           )
+         )
        LIMIT 1`,
-      [userId, presupuestoId, userId, userId],
+      [userId, presupuestoId, userId, userId, userId],
       (err, row) => {
         if (err) return reject(err);
         resolve(row || null);
@@ -1154,39 +1742,58 @@ function getPresupuestoOwnedByUser(userId, presupuestoId) {
 
 app.get('/api/presupuesto/cuentas', authenticate, (req, res) => {
   const sql = `
-    SELECT c.* FROM cuentas c
-    WHERE c.user_id = ?
-    UNION
-    SELECT c.* FROM cuentas c
-    JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id
-    WHERE cu.user_id = ?
+    SELECT DISTINCT c.* FROM cuentas c
+    LEFT JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id
+    LEFT JOIN cuenta_equipos ce ON c.id = ce.cuenta_id
+    LEFT JOIN team_memberships tm ON tm.team_id = ce.team_id
+    WHERE c.user_id = ? OR cu.user_id = ? OR tm.member_user_id = ?
     ORDER BY nombre ASC`;
-  db.all(sql, [req.userId, req.userId], (err, rows) => {
+  db.all(sql, [req.userId, req.userId, req.userId], async (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+    try {
+      const enriched = await Promise.all((rows || []).map(async (row) => ({
+        ...row,
+        team_ids: await getCuentaTeamIds(row.id)
+      })));
+      res.json(enriched);
+    } catch (metaErr) {
+      res.status(500).json({ error: metaErr.message });
+    }
   });
 });
 
-app.post('/api/presupuesto/cuentas', authenticate, (req, res) => {
-  const { nombre, presupuesto_mensual_base = 0 } = req.body;
+app.post('/api/presupuesto/cuentas', authenticate, async (req, res) => {
+  const { nombre, presupuesto_mensual_base = 0, team_ids = [] } = req.body;
   const cleanNombre = sanitizeText(nombre, 100);
   if (!cleanNombre) return res.status(400).json({ error: 'nombre es requerido' });
   const montoBase = sanitizeNumber(presupuesto_mensual_base);
   if (montoBase === null) return res.status(400).json({ error: 'presupuesto_mensual_base invalido' });
+  const normalizedTeamIds = [...new Set((Array.isArray(team_ids) ? team_ids : []).map((id) => toOptionalPositiveInt(id)).filter(Boolean))];
+  for (const teamId of normalizedTeamIds) {
+    const hasAccess = await userHasTeamAccess(req.userId, teamId);
+    if (!hasAccess) return res.status(400).json({ error: 'Uno de los equipos seleccionados es invalido' });
+  }
   const id = crypto.randomUUID();
   db.run(
     'INSERT INTO cuentas (id, user_id, nombre, presupuesto_mensual_base) VALUES (?, ?, ?, ?)',
     [id, req.userId, cleanNombre, montoBase],
-    function(err) {
+    async function(err) {
       if (err) return res.status(500).json({ error: 'Internal server error' });
-      res.status(201).json({ id, user_id: req.userId, nombre: cleanNombre, presupuesto_mensual_base: montoBase });
+      try {
+        await syncCuentaTeams(id, normalizedTeamIds);
+        res.status(201).json({ id, user_id: req.userId, nombre: cleanNombre, presupuesto_mensual_base: montoBase, team_ids: normalizedTeamIds });
+      } catch (syncErr) {
+        res.status(500).json({ error: syncErr.message });
+      }
     }
   );
 });
 
-app.patch('/api/presupuesto/cuentas/:id', authenticate, (req, res) => {
+app.patch('/api/presupuesto/cuentas/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { nombre, presupuesto_mensual_base } = req.body;
+  const { nombre, presupuesto_mensual_base, team_ids } = req.body;
+  const hasAccess = await userHasCuentaAccess(req.userId, id);
+  if (!hasAccess) return res.status(404).json({ error: 'Cuenta no encontrada o sin permiso' });
   const updates = [];
   const params = [];
   if (nombre !== undefined) {
@@ -1201,17 +1808,36 @@ app.patch('/api/presupuesto/cuentas/:id', authenticate, (req, res) => {
     updates.push('presupuesto_mensual_base = ?');
     params.push(montoBase);
   }
-  if (updates.length === 0) return res.status(400).json({ error: 'Sin campos para actualizar' });
-  params.push(id, req.userId);
-  db.run(`UPDATE cuentas SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`, params, function(err) {
+  const normalizedTeamIds = team_ids === undefined
+    ? null
+    : [...new Set((Array.isArray(team_ids) ? team_ids : []).map((item) => toOptionalPositiveInt(item)).filter(Boolean))];
+  if (normalizedTeamIds) {
+    for (const teamId of normalizedTeamIds) {
+      const teamAccess = await userHasTeamAccess(req.userId, teamId);
+      if (!teamAccess) return res.status(400).json({ error: 'Uno de los equipos seleccionados es invalido' });
+    }
+  }
+  const finish = async () => {
+    try {
+      if (normalizedTeamIds !== null) await syncCuentaTeams(id, normalizedTeamIds);
+      res.json({ success: true, team_ids: normalizedTeamIds !== null ? normalizedTeamIds : await getCuentaTeamIds(id) });
+    } catch (syncErr) {
+      res.status(500).json({ error: syncErr.message });
+    }
+  };
+  if (updates.length === 0) return finish();
+  params.push(id);
+  db.run(`UPDATE cuentas SET ${updates.join(', ')} WHERE id = ?`, params, function(err) {
     if (err) return res.status(500).json({ error: 'Internal server error' });
     if (this.changes === 0) return res.status(404).json({ error: 'Cuenta no encontrada o sin permiso' });
-    res.json({ success: true });
+    finish();
   });
 });
 
-app.delete('/api/presupuesto/cuentas/:id', authenticate, (req, res) => {
+app.delete('/api/presupuesto/cuentas/:id', authenticate, async (req, res) => {
   const { id } = req.params;
+  const hasAccess = await userHasCuentaAccess(req.userId, id);
+  if (!hasAccess) return res.status(404).json({ error: 'Cuenta no encontrada o sin permiso' });
   // Guard: block deletion if there are future installments pending
   const today = new Date().toISOString().split('T')[0];
   db.get(
@@ -1222,7 +1848,7 @@ app.delete('/api/presupuesto/cuentas/:id', authenticate, (req, res) => {
       if (row && row.cnt > 0) {
         return res.status(400).json({ error: `No se puede eliminar la cuenta: tiene ${row.cnt} cuota(s) pendiente(s) en meses futuros. Eliminá primero los gastos en cuotas proyectados.` });
       }
-      db.run('DELETE FROM cuentas WHERE id = ? AND user_id = ?', [id, req.userId], function(err) {
+      db.run('DELETE FROM cuentas WHERE id = ?', [id], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Cuenta no encontrada o sin permiso' });
         res.json({ deleted: true });
@@ -1239,7 +1865,7 @@ app.get('/api/presupuesto/cuentas/:id/categorias', authenticate, async (req, res
     if (!hasAccess) return res.status(403).json({ error: 'Forbidden' });
     db.all('SELECT * FROM categorias WHERE cuenta_id = ? ORDER BY nombre ASC', [id], (err, rows) => {
       if (err) return res.status(500).json({ error: 'Internal server error' });
-      res.json(rows);
+      res.json((rows || []).map((row) => ({ ...row, color_hex: closestAllowedColor(row.color_hex) })));
     });
   } catch {
     return res.status(500).json({ error: 'Internal server error' });
@@ -1254,7 +1880,8 @@ app.post('/api/presupuesto/cuentas/:cuentaId/categorias', authenticate, async (r
   const tiposValidos = ['EGRESO', 'INGRESO', 'INVERSION', 'INVERSIÓN'];
   if (!tiposValidos.includes(tipo)) return res.status(400).json({ error: 'tipo debe ser EGRESO, INGRESO o INVERSION' });
   const normalizedTipo = (tipo === 'INVERSIÓN') ? 'INVERSION' : tipo;
-  if (!isValidHexColor(color_hex)) return res.status(400).json({ error: 'color_hex invalido' });
+  const normalizedColor = closestAllowedColor(color_hex);
+  if (!ALLOWED_CATEGORY_COLORS.has(normalizedColor)) return res.status(400).json({ error: 'color_hex invalido' });
   const pct = sanitizeNumber(porcentaje_asignacion);
   if (pct === null || pct < 0 || pct > 100) return res.status(400).json({ error: 'porcentaje_asignacion invalido' });
   const id = crypto.randomUUID();
@@ -1263,10 +1890,10 @@ app.post('/api/presupuesto/cuentas/:cuentaId/categorias', authenticate, async (r
     if (!hasAccess) return res.status(403).json({ error: 'Forbidden' });
     db.run(
       'INSERT INTO categorias (id, cuenta_id, nombre, color_hex, porcentaje_asignacion, tipo) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, cuentaId, cleanNombre, color_hex, normalizedTipo === 'EGRESO' ? pct : 0, normalizedTipo],
+      [id, cuentaId, cleanNombre, normalizedColor, normalizedTipo === 'EGRESO' ? pct : 0, normalizedTipo],
       function(err) {
         if (err) return res.status(500).json({ error: 'Internal server error' });
-        res.status(201).json({ id, cuenta_id: cuentaId, nombre: cleanNombre, color_hex, porcentaje_asignacion: normalizedTipo === 'EGRESO' ? pct : 0, tipo: normalizedTipo });
+        res.status(201).json({ id, cuenta_id: cuentaId, nombre: cleanNombre, color_hex: normalizedColor, porcentaje_asignacion: normalizedTipo === 'EGRESO' ? pct : 0, tipo: normalizedTipo });
       }
     );
   } catch {
@@ -1293,9 +1920,10 @@ app.patch('/api/presupuesto/categorias/:id', authenticate, async (req, res) => {
     }
 
     if (color_hex !== undefined) {
-      if (!isValidHexColor(color_hex)) return res.status(400).json({ error: 'color_hex invalido' });
+      const normalizedColor = closestAllowedColor(color_hex);
+      if (!ALLOWED_CATEGORY_COLORS.has(normalizedColor)) return res.status(400).json({ error: 'color_hex invalido' });
       updates.push('color_hex = ?');
-      params.push(color_hex);
+      params.push(normalizedColor);
     }
 
     if (porcentaje_asignacion !== undefined) {
@@ -1353,10 +1981,17 @@ app.get('/api/presupuesto/gastos', authenticate, (req, res) => {
     FROM gastos g
     LEFT JOIN categorias cat ON g.categoria_id = cat.id
     LEFT JOIN cuentas c ON g.cuenta_id = c.id
-    WHERE (c.user_id = ? OR g.cuenta_id IN (
-      SELECT cuenta_id FROM cuenta_usuarios WHERE user_id = ?
-    ))`;
-  const params = [req.userId, req.userId];
+    WHERE (
+      c.user_id = ?
+      OR g.cuenta_id IN (SELECT cuenta_id FROM cuenta_usuarios WHERE user_id = ?)
+      OR EXISTS (
+        SELECT 1
+        FROM cuenta_equipos ce
+        JOIN team_memberships tm ON tm.team_id = ce.team_id
+        WHERE ce.cuenta_id = g.cuenta_id AND tm.member_user_id = ?
+      )
+    )`;
+  const params = [req.userId, req.userId, req.userId];
   if (cuenta_id) { sql += ' AND g.cuenta_id = ?'; params.push(cuenta_id); }
   if (mes && anio) {
     const inicio = `${anio}-${String(mes).padStart(2,'0')}-01`;
@@ -1374,9 +2009,9 @@ app.get('/api/presupuesto/gastos', authenticate, (req, res) => {
 app.post('/api/presupuesto/gastos', authenticate, async (req, res) => {
   const {
     categoria_id, cuenta_id, descripcion = '',
-    monto, fecha, metodo_pago = 'Efectivo',
+    monto, fecha = new Date().toISOString().split('T')[0], metodo_pago = 'Efectivo',
     es_recurrente = false,
-    cuota_actual = 1, total_cuotas = 1
+    total_cuotas = 1
   } = req.body;
 
   if (!categoria_id) return res.status(400).json({ error: 'categoria_id es requerido' });
@@ -1392,7 +2027,7 @@ app.post('/api/presupuesto/gastos', authenticate, async (req, res) => {
   if (montoNum === null) return res.status(400).json({ error: 'monto invalido' });
 
   const descripcionSafe = sanitizeText(descripcion, 240);
-  const metodoSafe = sanitizeText(metodo_pago, 40) || 'Efectivo';
+  const metodoSafe = normalizePaymentMethod(metodo_pago);
 
   try {
     const hasCuenta = await userHasCuentaAccess(req.userId, cuenta_id);
@@ -1404,12 +2039,21 @@ app.post('/api/presupuesto/gastos', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'La categoria no pertenece a la cuenta indicada' });
     }
 
-    const esRec = es_recurrente ? 1 : 0;
-    const totalCuotas = Math.max(1, Number(total_cuotas));
-    const proyeccion_id = (esRec || totalCuotas > 1) ? crypto.randomUUID() : null;
-    const totalInstancias = cat.tipo === 'EGRESO' ? (esRec ? 12 : totalCuotas)
-                          : cat.tipo === 'INGRESO' ? (esRec ? 12 : 1)
-                          : 1;
+    const isCreditCard = metodoSafe === 'Tarjeta credito';
+    const totalCuotas = Math.max(1, Number(total_cuotas || 1));
+    if (isCreditCard && cat.tipo !== 'EGRESO') {
+      return res.status(400).json({ error: 'Tarjeta credito con cuotas solo aplica a categorias EGRESO' });
+    }
+    const esRec = isCreditCard ? 0 : (es_recurrente ? 1 : 0);
+    const totalInstancias = isCreditCard
+      ? totalCuotas
+      : cat.tipo === 'EGRESO'
+        ? (esRec ? 12 : totalCuotas)
+        : cat.tipo === 'INGRESO'
+          ? (esRec ? 12 : 1)
+          : 1;
+    const proyeccion_id = (esRec || totalInstancias > 1) ? crypto.randomUUID() : null;
+    const montoPorInstancia = isCreditCard ? roundCurrency(montoNum / totalInstancias) : montoNum;
 
     const checkAndInsert = (warnFlag) => {
       const insertRow = (i, callback) => {
@@ -1418,7 +2062,7 @@ app.post('/api/presupuesto/gastos', authenticate, async (req, res) => {
         const cuotaNum = i + 1;
         db.run(
           'INSERT INTO gastos (id, categoria_id, cuenta_id, descripcion, monto, fecha, metodo_pago, es_recurrente, cuota_actual, total_cuotas, proyeccion_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, categoria_id, cuenta_id, descripcionSafe, montoNum, fechaInstancia, metodoSafe, esRec, cuotaNum, totalInstancias, proyeccion_id],
+          [id, categoria_id, cuenta_id, descripcionSafe, montoPorInstancia, fechaInstancia, metodoSafe, esRec, cuotaNum, totalInstancias, proyeccion_id],
           callback
         );
       };
@@ -1467,8 +2111,8 @@ app.post('/api/presupuesto/gastos', authenticate, async (req, res) => {
                   if (err4) return res.status(500).json({ error: 'Internal server error' });
                   const gastadoCat = gRow ? gRow.gastado_cat : 0;
                   let warning = null;
-                  if (montoCat > 0 && (gastadoCat + montoNum) > montoCat) {
-                    warning = `Tope de categoria alcanzado: gastado ${(gastadoCat + montoNum).toLocaleString('es-AR')} de ${montoCat.toLocaleString('es-AR')} (${cat.porcentaje_asignacion}% asignado)`;
+                  if (montoCat > 0 && (gastadoCat + montoPorInstancia) > montoCat) {
+                    warning = `Tope de categoria alcanzado: gastado ${(gastadoCat + montoPorInstancia).toLocaleString('es-AR')} de ${montoCat.toLocaleString('es-AR')} (${cat.porcentaje_asignacion}% asignado)`;
                   }
                   checkAndInsert(warning);
                 }
@@ -1488,55 +2132,106 @@ app.post('/api/presupuesto/gastos', authenticate, async (req, res) => {
 // Actualizar un gasto (y opcionalmente su proyección futura en cascada)
 app.patch('/api/presupuesto/gastos/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { monto, descripcion, metodo_pago, fecha, categoria_id, cascade_future = false } = req.body;
+  const { monto, descripcion, metodo_pago, fecha, categoria_id, cascade_future = false, total_cuotas } = req.body;
 
   try {
     const gasto = await getGastoOwnedByUser(req.userId, id);
     if (!gasto) return res.status(404).json({ error: 'Gasto no encontrado' });
 
+    const nextCategoriaId = categoria_id !== undefined ? categoria_id : gasto.categoria_id;
+    const cat = await getCategoriaOwnedByUser(req.userId, nextCategoriaId);
+    if (!cat) return res.status(400).json({ error: 'categoria_id invalida' });
+    if (String(cat.cuenta_id) !== String(gasto.cuenta_id)) {
+      return res.status(400).json({ error: 'La categoria no pertenece a la cuenta del gasto' });
+    }
+
+    const nextMetodo = metodo_pago !== undefined ? normalizePaymentMethod(metodo_pago) : normalizePaymentMethod(gasto.metodo_pago);
+    const isCreditCard = nextMetodo === 'Tarjeta credito';
+    if (isCreditCard && cat.tipo !== 'EGRESO') {
+      return res.status(400).json({ error: 'Tarjeta credito con cuotas solo aplica a categorias EGRESO' });
+    }
+
+    const nextFecha = fecha !== undefined ? String(fecha) : String(gasto.fecha);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextFecha)) return res.status(400).json({ error: 'fecha invalida' });
+    const totalCuotas = total_cuotas !== undefined
+      ? Math.max(1, Number(total_cuotas || 1))
+      : Math.max(1, Number(gasto.total_cuotas || 1));
+    const currentCuota = Math.max(1, Number(gasto.cuota_actual || 1));
+    if (currentCuota > totalCuotas) {
+      return res.status(400).json({ error: 'La cuota actual no puede ser mayor al total de cuotas' });
+    }
+
+    const sourceSeriesCount = Math.max(1, Number(gasto.total_cuotas || 1));
+    const currentTotalAmount = gasto.proyeccion_id && sourceSeriesCount > 1
+      ? Number(gasto.monto || 0) * sourceSeriesCount
+      : Number(gasto.monto || 0);
+    const nextTotalAmount = monto !== undefined ? Number(monto) : currentTotalAmount;
+    if (!Number.isFinite(nextTotalAmount)) return res.status(400).json({ error: 'monto invalido' });
+
+    const nextDescripcion = descripcion !== undefined ? sanitizeText(descripcion, 240) : sanitizeText(gasto.descripcion || '', 240);
+    const nextProjectionNeeded = isCreditCard ? totalCuotas > 1 : Boolean(gasto.es_recurrente) || totalCuotas > 1;
+    const nextProjectionId = nextProjectionNeeded ? (gasto.proyeccion_id || crypto.randomUUID()) : null;
+    const perInstallmentAmount = isCreditCard ? roundCurrency(nextTotalAmount / totalCuotas) : roundCurrency(nextTotalAmount);
+
+    const rebuildSeries = cascade_future || total_cuotas !== undefined || isCreditCard || Boolean(gasto.proyeccion_id);
+    if (rebuildSeries && nextProjectionNeeded) {
+      db.run(
+        `UPDATE gastos
+         SET categoria_id = ?, descripcion = ?, monto = ?, fecha = ?, metodo_pago = ?, cuota_actual = ?, total_cuotas = ?, proyeccion_id = ?, es_recurrente = 0
+         WHERE id = ?`,
+        [nextCategoriaId, nextDescripcion, perInstallmentAmount, nextFecha, nextMetodo, currentCuota, totalCuotas, nextProjectionId, id],
+        (updateErr) => {
+          if (updateErr) return res.status(500).json({ error: 'Internal server error' });
+          db.run(
+            'DELETE FROM gastos WHERE proyeccion_id = ? AND cuota_actual > ?',
+            [nextProjectionId, currentCuota],
+            (deleteErr) => {
+              if (deleteErr) return res.status(500).json({ error: 'Internal server error' });
+              let cuota = currentCuota + 1;
+              const insertNext = () => {
+                if (cuota > totalCuotas) return res.json({ success: true, cascaded: true, total_cuotas: totalCuotas });
+                db.run(
+                  'INSERT INTO gastos (id, categoria_id, cuenta_id, descripcion, monto, fecha, metodo_pago, es_recurrente, cuota_actual, total_cuotas, proyeccion_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)',
+                  [
+                    crypto.randomUUID(),
+                    nextCategoriaId,
+                    gasto.cuenta_id,
+                    nextDescripcion,
+                    perInstallmentAmount,
+                    addMonths(nextFecha, cuota - currentCuota),
+                    nextMetodo,
+                    cuota,
+                    totalCuotas,
+                    nextProjectionId
+                  ],
+                  (insertErr) => {
+                    if (insertErr) return res.status(500).json({ error: 'Internal server error' });
+                    cuota += 1;
+                    insertNext();
+                  }
+                );
+              };
+              insertNext();
+            }
+          );
+        }
+      );
+      return;
+    }
+
     const updates = [];
     const params = [];
-
-    if (monto !== undefined) {
-      const montoNum = sanitizeNumber(monto);
-      if (montoNum === null) return res.status(400).json({ error: 'monto invalido' });
-      updates.push('monto = ?');
-      params.push(montoNum);
-    }
-    if (descripcion !== undefined) { updates.push('descripcion = ?'); params.push(sanitizeText(descripcion, 240)); }
-    if (metodo_pago !== undefined) { updates.push('metodo_pago = ?'); params.push(sanitizeText(metodo_pago, 40)); }
-    if (categoria_id !== undefined) {
-      const cat = await getCategoriaOwnedByUser(req.userId, categoria_id);
-      if (!cat) return res.status(400).json({ error: 'categoria_id invalida' });
-      if (String(cat.cuenta_id) !== String(gasto.cuenta_id)) {
-        return res.status(400).json({ error: 'La categoria no pertenece a la cuenta del gasto' });
-      }
-      updates.push('categoria_id = ?');
-      params.push(categoria_id);
-    }
-    if (fecha !== undefined) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))) return res.status(400).json({ error: 'fecha invalida' });
-      updates.push('fecha = ?');
-      params.push(fecha);
-    }
-
+    if (monto !== undefined) { updates.push('monto = ?'); params.push(roundCurrency(nextTotalAmount)); }
+    if (descripcion !== undefined) { updates.push('descripcion = ?'); params.push(nextDescripcion); }
+    if (metodo_pago !== undefined) { updates.push('metodo_pago = ?'); params.push(nextMetodo); }
+    if (categoria_id !== undefined) { updates.push('categoria_id = ?'); params.push(nextCategoriaId); }
+    if (fecha !== undefined) { updates.push('fecha = ?'); params.push(nextFecha); }
+    if (total_cuotas !== undefined) { updates.push('total_cuotas = ?'); params.push(totalCuotas); }
     if (updates.length === 0) return res.status(400).json({ error: 'Sin campos para actualizar' });
 
     db.run(`UPDATE gastos SET ${updates.join(', ')} WHERE id = ?`, [...params, id], function(err) {
       if (err) return res.status(500).json({ error: 'Internal server error' });
-
-      if (cascade_future && gasto.proyeccion_id && monto !== undefined) {
-        db.run(
-          'UPDATE gastos SET monto = ? WHERE proyeccion_id = ? AND fecha > ?',
-          [Number(monto), gasto.proyeccion_id, gasto.fecha],
-          (cascErr) => {
-            if (cascErr) return res.status(500).json({ error: 'Internal server error' });
-            res.json({ success: true, cascaded: true });
-          }
-        );
-      } else {
-        res.json({ success: true, cascaded: false });
-      }
+      res.json({ success: true, cascaded: false });
     });
   } catch {
     return res.status(500).json({ error: 'Internal server error' });
@@ -1707,11 +2402,13 @@ app.get('/api/presupuesto/dashboard', authenticate, (req, res) => {
   const fechaFin = `${anio}-${String(mesNum).padStart(2,'0')}-31`;
 
   const cuentasSql = `
-    SELECT c.* FROM cuentas c WHERE c.user_id = ?
-    UNION
-    SELECT c.* FROM cuentas c JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id WHERE cu.user_id = ?`;
+    SELECT DISTINCT c.* FROM cuentas c
+    LEFT JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id
+    LEFT JOIN cuenta_equipos ce ON ce.cuenta_id = c.id
+    LEFT JOIN team_memberships tm ON tm.team_id = ce.team_id
+    WHERE c.user_id = ? OR cu.user_id = ? OR tm.member_user_id = ?`;
 
-  db.all(cuentasSql, [req.userId, req.userId], (err, cuentas) => {
+  db.all(cuentasSql, [req.userId, req.userId, req.userId], (err, cuentas) => {
     if (err) return res.status(500).json({ error: err.message });
     if (cuentas.length === 0) return res.json({ cuentas: [], total_global_disponible: 0, total_global_gastado: 0 });
 
@@ -1827,11 +2524,13 @@ app.get('/api/presupuesto/recurrentes-anuales', authenticate, (req, res) => {
 
   // Build where clause
   const cuentasSql = `
-    SELECT c.id FROM cuentas c WHERE c.user_id = ?
-    UNION
-    SELECT c.id FROM cuentas c JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id WHERE cu.user_id = ?`;
+    SELECT DISTINCT c.id FROM cuentas c
+    LEFT JOIN cuenta_usuarios cu ON c.id = cu.cuenta_id
+    LEFT JOIN cuenta_equipos ce ON ce.cuenta_id = c.id
+    LEFT JOIN team_memberships tm ON tm.team_id = ce.team_id
+    WHERE c.user_id = ? OR cu.user_id = ? OR tm.member_user_id = ?`;
 
-  db.all(cuentasSql, [req.userId, req.userId], (err, cuentas) => {
+  db.all(cuentasSql, [req.userId, req.userId, req.userId], (err, cuentas) => {
     if (err) return res.status(500).json({ error: err.message });
     let cuentaIds = cuentas.map(c => c.id);
     if (cuenta_id) cuentaIds = cuentaIds.filter(id => String(id) === String(cuenta_id));
