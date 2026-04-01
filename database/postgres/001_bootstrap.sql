@@ -82,6 +82,18 @@ DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'email'
+  ) THEN
+    ALTER TABLE users ADD COLUMN email TEXT;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'password_version'
+  ) THEN
+    ALTER TABLE users ADD COLUMN password_version INTEGER NOT NULL DEFAULT 0;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
     WHERE table_name = 'tasks' AND column_name = 'team_id'
   ) THEN
     ALTER TABLE tasks ADD COLUMN team_id BIGINT;
@@ -147,6 +159,22 @@ CREATE TABLE IF NOT EXISTS inv_transacciones (
   user_id BIGINT REFERENCES users(id),
   team_id BIGINT REFERENCES teams(id) ON DELETE SET NULL
 );
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'inv_activos' AND column_name = 'team_id'
+  ) THEN
+    ALTER TABLE inv_activos ADD COLUMN team_id BIGINT REFERENCES teams(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'inv_transacciones' AND column_name = 'team_id'
+  ) THEN
+    ALTER TABLE inv_transacciones ADD COLUMN team_id BIGINT REFERENCES teams(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS inv_config (
   clave TEXT PRIMARY KEY,
