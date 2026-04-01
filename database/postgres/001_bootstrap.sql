@@ -171,13 +171,6 @@ CREATE TABLE IF NOT EXISTS cuenta_usuarios (
   PRIMARY KEY(cuenta_id, user_id)
 );
 
-CREATE TABLE IF NOT EXISTS cuenta_equipos (
-  cuenta_id TEXT NOT NULL REFERENCES cuentas(id) ON DELETE CASCADE,
-  team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY(cuenta_id, team_id)
-);
-
 CREATE TABLE IF NOT EXISTS categorias (
   id TEXT PRIMARY KEY,
   cuenta_id TEXT NOT NULL REFERENCES cuentas(id) ON DELETE CASCADE,
@@ -220,6 +213,13 @@ CREATE TABLE IF NOT EXISTS presupuestos_mensuales (
   nota_origen TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(cuenta_id, mes, anio)
+);
+
+CREATE TABLE IF NOT EXISTS cuenta_equipos (
+  cuenta_id TEXT NOT NULL REFERENCES cuentas(id) ON DELETE CASCADE,
+  team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY(cuenta_id, team_id)
 );
 
 INSERT INTO team_memberships (team_id, member_user_id)
