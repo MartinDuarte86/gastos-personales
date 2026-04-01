@@ -1,0 +1,7 @@
+.agents
+AGENTS.md
+output
+tmp
+*.db
+*.mp4
+scripts/generate_app_summary_pdf.py
