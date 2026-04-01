@@ -35,6 +35,7 @@ const state = {
 
     const authPanel = document.getElementById('authPanel');
     const appBootSplash = document.getElementById('appBootSplash');
+    const appShell = document.querySelector('.app');
     const authForm = document.getElementById('authForm');
     const authUsernameInput = document.getElementById('authUsername');
     const authEmailInput = document.getElementById('authEmail');
@@ -1000,6 +1001,7 @@ const state = {
       if (teamsViewBtn) teamsViewBtn.classList.toggle('active', isTeams);
 
       if (appSidebar) appSidebar.hidden = isAuth ? true : !usesTaskSidebar;
+      if (appShell) appShell.classList.toggle('app-shell-focus', !isAuth && !usesTaskSidebar);
       if (taskForm) taskForm.hidden = isAuth ? true : !isTareasTab;
       if (fabAddBtn) fabAddBtn.hidden = isAuth ? true : !isMatrix;
 

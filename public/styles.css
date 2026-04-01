@@ -3008,6 +3008,14 @@ body.app-loading {
   padding: 20px;
 }
 
+.app.app-shell-focus {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app.app-shell-focus .main {
+  grid-column: 1 / -1;
+}
+
 .sidebar {
   width: auto;
   top: 20px;
